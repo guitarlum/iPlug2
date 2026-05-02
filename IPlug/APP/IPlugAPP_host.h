@@ -131,8 +131,8 @@ public:
     
     , mAudioInChanL(obj.mAudioInChanL)
     , mAudioInChanR(obj.mAudioInChanR)
-    , mAudioOutChanL(obj.mAudioInChanL)
-    , mAudioOutChanR(obj.mAudioInChanR)
+    , mAudioOutChanL(obj.mAudioOutChanL)
+    , mAudioOutChanR(obj.mAudioOutChanR)
     {
     }
     
@@ -238,6 +238,20 @@ private:
   bool mExiting = false;
   bool mAudioEnding = false;
   bool mAudioDone = false;
+
+  // VoLum: physical channel routing for the active audio stream.
+  // *Offset are 0-based device-channel offsets that the AudioCallback uses
+  // to map the user's Audio Settings selection (mAudioInChanL/R, mAudioOutChanL/R,
+  // 1-based) onto the raw RtAudio non-interleaved buffer. *Chans is the total
+  // number of device channels the stream was opened with (used for striding /
+  // memset). Without these, the host always opened firstChannel=0/nChannels=
+  // MaxNChannels and the dialog selection had no effect (broken on multi-channel
+  // ASIO interfaces such as the RME Babyface Pro FS).
+  int mActiveInOffset = 0;
+  int mActiveOutOffsetL = 0;
+  int mActiveOutOffsetR = 1;
+  int mActiveDeviceInChans = 0;
+  int mActiveDeviceOutChans = 0;
 
   /** The index of the operating systems default input device, -1 if not detected */
   int32_t mDefaultInputDev = -1;

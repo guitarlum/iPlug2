@@ -14,6 +14,8 @@
 #include <sys/stat.h>
 #endif
 
+#include <algorithm>
+
 #include "IPlugLogger.h"
 
 using namespace iplug;
@@ -577,14 +579,88 @@ bool IPlugAPPHost::InitAudio(uint32_t inId, uint32_t outId, uint32_t sr, uint32_
 {
   CloseAudio();
 
+  // VoLum: WDL_PtrList does not shrink on its own and CloseAudio() does not
+  // clear these. Without this, repeated InitAudio calls (e.g. switching
+  // DirectSound -> ASIO and picking higher device channels) accumulate stale
+  // slots in the lists; subsequent .Set() calls into a list that grew via
+  // .Add() and was never trimmed interact poorly with WDL's allocator under
+  // the driver-switch timing window. The pointers held are not owned (they
+  // index into RtAudio's buffer), so plain Empty() is correct here.
+  mInputBufPtrs.Empty();
+  mOutputBufPtrs.Empty();
+
+  // VoLum: open the device with enough channels to *include* the user's
+  // selection (1-based mAudioInChanL/R, mAudioOutChanL/R) and remember the
+  // 0-based offsets so AudioCallback can cherry-pick the right channels.
+  // We keep firstChannel = 0 because some ASIO drivers misbehave when
+  // firstChannel is non-zero with a partial channel count; opening with the
+  // full required range and routing in software is the most compatible path.
+  //
+  // VoLum: probe the device(s) once. For Windows ASIO inId == outId (single
+  // duplex device) and calling getDeviceInfo twice on the same ASIO device id
+  // can leave the driver in a bad state and corrupt the heap on the next
+  // openStream() call, especially across a DirectSound -> ASIO transition
+  // (observed crash 0xc0000374 on RME Babyface Pro FS). Wrap in try/catch so
+  // a failing probe degrades gracefully instead of taking the host down.
+  RtAudio::DeviceInfo inDevInfo;
+  RtAudio::DeviceInfo outDevInfo;
+  try { inDevInfo = mDAC->getDeviceInfo(inId); }
+  catch (RtAudioError& e) { e.printMessage(); }
+  if (outId == inId)
+  {
+    outDevInfo = inDevInfo;
+  }
+  else
+  {
+    try { outDevInfo = mDAC->getDeviceInfo(outId); }
+    catch (RtAudioError& e) { e.printMessage(); }
+  }
+
+  const int pluginIns  = GetPlug()->MaxNChannels(ERoute::kInput);
+  const int pluginOuts = GetPlug()->MaxNChannels(ERoute::kOutput);
+
+  const int devInChans  = inDevInfo.probed  ? static_cast<int>(inDevInfo.inputChannels)   : 0;
+  const int devOutChans = outDevInfo.probed ? static_cast<int>(outDevInfo.outputChannels) : 0;
+
+  auto clamp1Based = [](uint32_t v, int hi) {
+    int iv = static_cast<int>(v);
+    if (iv < 1) iv = 1;
+    if (hi >= 1 && iv > hi) iv = hi;
+    return iv;
+  };
+
+  const int wantInL  = devInChans  > 0 ? clamp1Based(mState.mAudioInChanL,  devInChans)  : 1;
+  const int wantInR  = devInChans  > 0 ? clamp1Based(mState.mAudioInChanR,  devInChans)  : 1;
+  const int wantOutL = devOutChans > 0 ? clamp1Based(mState.mAudioOutChanL, devOutChans) : 1;
+  const int wantOutR = devOutChans > 0 ? clamp1Based(mState.mAudioOutChanR, devOutChans) : 1;
+
+  int neededIn  = std::max({pluginIns,  wantInL,  wantInR});
+  int neededOut = std::max({pluginOuts, wantOutL, wantOutR});
+  if (devInChans  > 0) neededIn  = std::min(neededIn,  devInChans);
+  if (devOutChans > 0) neededOut = std::min(neededOut, devOutChans);
+
   RtAudio::StreamParameters iParams, oParams;
   iParams.deviceId = inId;
-  iParams.nChannels = GetPlug()->MaxNChannels(ERoute::kInput); // TODO: flexible channel count
-  iParams.firstChannel = 0; // TODO: flexible channel count
+  iParams.nChannels = neededIn;
+  iParams.firstChannel = 0;
 
   oParams.deviceId = outId;
-  oParams.nChannels = GetPlug()->MaxNChannels(ERoute::kOutput); // TODO: flexible channel count
-  oParams.firstChannel = 0; // TODO: flexible channel count
+  oParams.nChannels = neededOut;
+  oParams.firstChannel = 0;
+
+  // Convert to 0-based offsets and re-clamp against the channel count we are
+  // actually opening (devInfo could be unprobed; in that case neededIn already
+  // covers the wants).
+  auto clamp0 = [](int v, int hi) {
+    if (v < 0) v = 0;
+    if (hi > 0 && v >= hi) v = hi - 1;
+    return v;
+  };
+  mActiveInOffset       = clamp0(wantInL  - 1, neededIn);
+  mActiveOutOffsetL     = clamp0(wantOutL - 1, neededOut);
+  mActiveOutOffsetR     = clamp0(wantOutR - 1, neededOut);
+  mActiveDeviceInChans  = neededIn;
+  mActiveDeviceOutChans = neededOut;
 
   mBufferSize = iovs; // mBufferSize may get changed by stream
 
@@ -687,60 +763,140 @@ int IPlugAPPHost::AudioCallback(void* pOutputBuffer, void* pInputBuffer, uint32_
 {
   IPlugAPPHost* _this = (IPlugAPPHost*) pUserData;
 
-  int nins = _this->GetPlug()->MaxNChannels(ERoute::kInput);
-  int nouts = _this->GetPlug()->MaxNChannels(ERoute::kOutput);
-  
+  const int pluginIns  = _this->GetPlug()->MaxNChannels(ERoute::kInput);
+  const int pluginOuts = _this->GetPlug()->MaxNChannels(ERoute::kOutput);
+
+  // Number of physical channels actually opened by RtAudio (set in InitAudio).
+  // We stride / memset against these, not against the plugin's channel count.
+  // VoLum: belt-and-braces - if the active counts are stale (driver re-init,
+  // race with InitAudio, etc.) a memset(devOuts * nFrames) larger than the
+  // actual buffer would heap-stomp on the first callback. Treat any
+  // non-positive count as "nothing to do" and bail safely.
+  const int devIns  = std::max(0, _this->mActiveDeviceInChans  > 0 ? _this->mActiveDeviceInChans  : pluginIns);
+  const int devOuts = std::max(0, _this->mActiveDeviceOutChans > 0 ? _this->mActiveDeviceOutChans : pluginOuts);
+
   double* pInputBufferD = static_cast<double*>(pInputBuffer);
   double* pOutputBufferD = static_cast<double*>(pOutputBuffer);
 
+  if (devOuts <= 0 || pOutputBufferD == nullptr)
+    return 0;
+
+  // 0-based device offsets selected by the user in the Audio Settings dialog.
+  // Defensive clamp: if any offset got out of range vs. the channel count we
+  // actually opened with, snap it back into range here so later strided
+  // pointer arithmetic stays inside the buffer.
+  auto clampToRange = [](int v, int lo, int hi) {
+    if (v < lo) return lo;
+    if (v > hi) return hi;
+    return v;
+  };
+  const int inOffset0  = devIns  > 0 ? clampToRange(_this->mActiveInOffset,    0, devIns  - 1) : 0;
+  const int outOffsetL = clampToRange(_this->mActiveOutOffsetL,  0, devOuts - 1);
+  const int outOffsetR = clampToRange(_this->mActiveOutOffsetR,  0, devOuts - 1);
+
   bool startWait = _this->mVecWait >= APP_N_VECTOR_WAIT; // wait APP_N_VECTOR_WAIT * iovs before processing audio, to avoid clicks
   bool doFade = _this->mVecWait == APP_N_VECTOR_WAIT || _this->mAudioEnding;
-  
+
   if (startWait && !_this->mAudioDone)
   {
     if (doFade)
-      ApplyFades(pInputBufferD, nins, nFrames, _this->mAudioEnding);
-    
-    for (int i = 0; i < nFrames; i++)
+      ApplyFades(pInputBufferD, devIns, nFrames, _this->mAudioEnding);
+
+    // VoLum: zero the entire output device buffer so that physical outputs we
+    // are not driving stay silent (no leaking the dry input pass-through to
+    // every channel of a multi-out interface).
+    if (devOuts > 0 && pOutputBufferD != nullptr)
+      memset(pOutputBufferD, 0, static_cast<size_t>(devOuts) * nFrames * sizeof(double));
+
+    for (int i = 0; i < (int) nFrames; i++)
     {
       _this->mBufIndex %= APP_SIGNAL_VECTOR_SIZE;
 
       if (_this->mBufIndex == 0)
       {
-        for (int c = 0; c < nins; c++)
+        // VoLum: route the user-selected device input channel to plugin in[0]
+        // (and the R selection to in[1] if the plugin has 2 inputs). The old
+        // behavior wired plugin in[c] to device in[c], which ignored the
+        // dialog selection entirely.
+        if (pluginIns >= 1)
         {
-          _this->mInputBufPtrs.Set(c, (pInputBufferD + (c * nFrames)) + i);
+          const int devCh = (inOffset0 < devIns) ? inOffset0 : 0;
+          _this->mInputBufPtrs.Set(0, (pInputBufferD + (devCh * nFrames)) + i);
         }
-        
-        for (int c = 0; c < nouts; c++)
+        if (pluginIns >= 2)
         {
-          _this->mOutputBufPtrs.Set(c, (pOutputBufferD + (c * nFrames)) + i);
+          const int wantR = _this->mActiveOutOffsetR; // unused; placeholder to keep clarity
+          (void) wantR;
+          // For inputs we always have at most one selectable "L" via the
+          // dialog; if a future plugin needs a stereo input we mirror L into
+          // both, since the iPlug2 dialog only exposes a single input pair
+          // and R-input has historically been a no-op for this codebase.
+          const int devCh = (inOffset0 < devIns) ? inOffset0 : 0;
+          _this->mInputBufPtrs.Set(1, (pInputBufferD + (devCh * nFrames)) + i);
         }
-        
+        for (int c = 2; c < pluginIns; c++)
+        {
+          _this->mInputBufPtrs.Set(c, (pInputBufferD + (0 * nFrames)) + i);
+        }
+
+        // VoLum: route plugin out[0] to the user-selected device output
+        // channel (L), out[1] to the R selection, and any extra plugin
+        // outputs to the next device channels (clamped). The output buffer
+        // was zeroed above, so unused device channels stay silent.
+        if (pluginOuts >= 1)
+        {
+          const int devCh = (outOffsetL < devOuts) ? outOffsetL : 0;
+          _this->mOutputBufPtrs.Set(0, (pOutputBufferD + (devCh * nFrames)) + i);
+        }
+        if (pluginOuts >= 2)
+        {
+          const int devCh = (outOffsetR < devOuts) ? outOffsetR : ((outOffsetL + 1 < devOuts) ? outOffsetL + 1 : outOffsetL);
+          _this->mOutputBufPtrs.Set(1, (pOutputBufferD + (devCh * nFrames)) + i);
+        }
+        for (int c = 2; c < pluginOuts; c++)
+        {
+          const int devCh = (c < devOuts) ? c : (devOuts - 1);
+          _this->mOutputBufPtrs.Set(c, (pOutputBufferD + (devCh * nFrames)) + i);
+        }
+
         _this->mIPlug->AppProcess(_this->mInputBufPtrs.GetList(), _this->mOutputBufPtrs.GetList(), APP_SIGNAL_VECTOR_SIZE);
 
         _this->mSamplesElapsed += APP_SIGNAL_VECTOR_SIZE;
       }
-      
-      for (int c = 0; c < nouts; c++)
+
+      // VoLum: only scale the device channels we actually wrote to. Scaling
+      // every output channel would also touch the zeros we just memset (a
+      // no-op for APP_MULT == 1.0, but a correctness hazard if APP_MULT ever
+      // changes) and obscures intent.
+      if (pluginOuts >= 1 && outOffsetL < devOuts)
+        pOutputBufferD[outOffsetL * nFrames + i] *= APP_MULT;
+      if (pluginOuts >= 2)
       {
-        pOutputBufferD[c * nFrames + i] *= APP_MULT;
+        const int devCh = (outOffsetR < devOuts) ? outOffsetR : ((outOffsetL + 1 < devOuts) ? outOffsetL + 1 : outOffsetL);
+        if (devCh != outOffsetL && devCh < devOuts)
+          pOutputBufferD[devCh * nFrames + i] *= APP_MULT;
+      }
+      for (int c = 2; c < pluginOuts; c++)
+      {
+        const int devCh = (c < devOuts) ? c : (devOuts - 1);
+        if (devCh != outOffsetL && (pluginOuts < 2 || devCh != outOffsetR))
+          pOutputBufferD[devCh * nFrames + i] *= APP_MULT;
       }
 
       _this->mBufIndex++;
     }
-    
+
     if (doFade)
-      ApplyFades(pOutputBufferD, nouts, nFrames, _this->mAudioEnding);
-    
+      ApplyFades(pOutputBufferD, devOuts, nFrames, _this->mAudioEnding);
+
     if (_this->mAudioEnding)
       _this->mAudioDone = true;
   }
   else
   {
-    memset(pOutputBufferD, 0, nFrames * nouts * sizeof(double));
+    memset(pOutputBufferD, 0, nFrames * devOuts * sizeof(double));
   }
-  
+
   _this->mVecWait = std::min(_this->mVecWait + 1, uint32_t(APP_N_VECTOR_WAIT + 1));
 
   return 0;
