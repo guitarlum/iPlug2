@@ -70,8 +70,20 @@ extern HINSTANCE gHINSTANCE;
 
 BEGIN_IPLUG_NAMESPACE
 
-const int kNumBufferSizeOptions = 11;
-const std::string kBufferSizeOptions[kNumBufferSizeOptions] = {"32", "64", "96", "128", "192", "256", "512", "1024", "2048", "4096", "8192" };
+const int kNumBufferSizeOptions = 10;
+const std::string kBufferSizeOptions[kNumBufferSizeOptions] = {"48", "64", "96", "128", "256", "512", "1024", "2048", "4096", "8192" };
+
+inline uint32_t NormalizeAPPBufferSize(uint32_t bufferSize)
+{
+  for (int i = 0; i < kNumBufferSizeOptions; ++i)
+  {
+    const uint32_t option = static_cast<uint32_t>(atoi(kBufferSizeOptions[i].c_str()));
+    if (bufferSize <= option)
+      return option;
+  }
+
+  return static_cast<uint32_t>(atoi(kBufferSizeOptions[kNumBufferSizeOptions - 1].c_str()));
+}
 const int kDeviceDS = 0; const int kDeviceCoreAudio = 0; const int kDeviceAlsa = 0;
 const int kDeviceASIO = 1; const int kDeviceJack = 1;
 extern UINT gSCROLLMSG;

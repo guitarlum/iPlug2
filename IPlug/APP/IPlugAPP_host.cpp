@@ -136,7 +136,7 @@ bool IPlugAPPHost::InitState()
       mState.mAudioOutChanR = GetPrivateProfileInt("audio", "out2", 2, mINIPath.Get());
       //mState.mAudioInIsMono = GetPrivateProfileInt("audio", "monoinput", 0, mINIPath.Get());
 
-      mState.mBufferSize = GetPrivateProfileInt("audio", "buffer", 512, mINIPath.Get());
+      mState.mBufferSize = NormalizeAPPBufferSize(GetPrivateProfileInt("audio", "buffer", 512, mINIPath.Get()));
       mState.mAudioSR = GetPrivateProfileInt("audio", "sr", 44100, mINIPath.Get());
 
       //midi

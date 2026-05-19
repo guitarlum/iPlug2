@@ -22,12 +22,15 @@
 
 #ifdef OS_WIN
 #include "asio.h"
+#include <shellapi.h>
 #define GET_MENU() GetMenu(gHWND)
 #elif defined OS_MAC
 #define GET_MENU() SWELL_GetCurrentMenu()
 #endif
 
 using namespace iplug;
+
+static constexpr const char* kVoLumManualURL = "https://github.com/guitarlum/VoLum/blob/main/docs/user-guide.en.md";
 
 #if !defined NO_IGRAPHICS
 #include "IGraphics.h"
@@ -178,11 +181,13 @@ void IPlugAPPHost::PopulateAudioDialogs(HWND hwndDlg)
 //  }
 
 //  Populate buffer size combobox
+  SendDlgItemMessage(hwndDlg,IDC_COMBO_AUDIO_BUF_SIZE,CB_RESETCONTENT,0,0);
   for (int i = 0; i< kNumBufferSizeOptions; i++)
   {
     SendDlgItemMessage(hwndDlg,IDC_COMBO_AUDIO_BUF_SIZE,CB_ADDSTRING,0,(LPARAM)kBufferSizeOptions[i].c_str());
   }
   
+  mState.mBufferSize = NormalizeAPPBufferSize(mState.mBufferSize);
   WDL_String str;
   str.SetFormatted(32, "%i", mState.mBufferSize);
 
@@ -584,7 +589,17 @@ WDL_DLGRET IPlugAPPHost::MainDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPA
 
           if (pluginOpensHelp == false)
           {
-            MessageBox(hwndDlg, "See the manual", PLUG_NAME, MB_OK);
+#ifdef OS_WIN
+            const auto result = ShellExecuteA(hwndDlg, "open", kVoLumManualURL, nullptr, nullptr, SW_SHOWNORMAL);
+            if ((INT_PTR) result <= 32)
+              MessageBox(hwndDlg, "Could not open the manual in your browser.", PLUG_NAME, MB_OK);
+#elif defined OS_MAC
+            WDL_String command;
+            command.SetFormatted(1024, "open \"%s\"", kVoLumManualURL);
+            system(command.Get());
+#else
+            MessageBox(hwndDlg, kVoLumManualURL, PLUG_NAME, MB_OK);
+#endif
           }
           return 0;
         }
