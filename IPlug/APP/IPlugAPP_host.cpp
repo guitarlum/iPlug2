@@ -68,6 +68,17 @@ bool IPlugAPPHost::Init()
       return false;
   }
   ProbeAudioIO(); // find out what audio IO devs are available and put their IDs in the global variables gAudioInputDevs / gAudioOutputDevs
+#if defined OS_WIN
+  if (!GetSharedAudioDevs().size() && mState.mAudioDriverType != 0)
+  {
+    mState.mAudioDriverType = 0;
+    if (!TryToChangeAudioDriverType())
+      return false;
+    ProbeAudioIO();
+  }
+#endif
+  if (NormalizeSingleAudioDeviceState(true))
+    UpdateINI();
   InitMidi(); // creates RTMidiIn and RTMidiOut objects
   ProbeMidiIO(); // find out what midi IO devs are available and put their names in the global variables gMidiInputDevs / gMidiOutputDevs
   SelectMIDIDevice(ERoute::kInput, mState.mMidiInDev.Get());
@@ -220,6 +231,95 @@ int IPlugAPPHost::GetAudioDeviceIdx(const char* deviceNameToTest) const
   }
   
   return -1;
+}
+
+std::vector<uint32_t> IPlugAPPHost::GetSharedAudioDevs() const
+{
+  std::vector<uint32_t> sharedDevs;
+
+  for (auto outputDev : mAudioOutputDevs)
+  {
+    const std::string outputName = GetAudioDeviceName(outputDev);
+    bool hasMatchingInput = false;
+
+    for (auto inputDev : mAudioInputDevs)
+    {
+      if (GetAudioDeviceName(inputDev) == outputName)
+      {
+        hasMatchingInput = true;
+        break;
+      }
+    }
+
+    if (hasMatchingInput &&
+        std::find(sharedDevs.begin(), sharedDevs.end(), outputDev) == sharedDevs.end())
+    {
+      sharedDevs.push_back(outputDev);
+    }
+  }
+
+  return sharedDevs;
+}
+
+bool IPlugAPPHost::NormalizeSingleAudioDeviceState(bool preferOutputDevice)
+{
+  bool changed = false;
+  auto sharedDevs = GetSharedAudioDevs();
+
+  const char* preferredName = preferOutputDevice ? mState.mAudioOutDev.Get() : mState.mAudioInDev.Get();
+  const char* fallbackName = preferOutputDevice ? mState.mAudioInDev.Get() : mState.mAudioOutDev.Get();
+  const char* selectedName = nullptr;
+  std::string selectedNameStorage;
+
+  auto isSharedDeviceName = [&](const char* name) {
+    if (!name || !name[0])
+      return false;
+
+    for (auto dev : sharedDevs)
+    {
+      if (!strcmp(name, GetAudioDeviceName(dev).c_str()))
+        return true;
+    }
+
+    return false;
+  };
+
+  if (isSharedDeviceName(preferredName))
+    selectedName = preferredName;
+  else if (isSharedDeviceName(fallbackName))
+    selectedName = fallbackName;
+  else if (sharedDevs.size())
+  {
+    selectedNameStorage = GetAudioDeviceName(sharedDevs[0]);
+    selectedName = selectedNameStorage.c_str();
+  }
+  else if (preferredName && preferredName[0])
+    selectedName = preferredName;
+  else if (fallbackName && fallbackName[0])
+    selectedName = fallbackName;
+
+  if (selectedName)
+  {
+    if (strcmp(mState.mAudioInDev.Get(), selectedName))
+    {
+      mState.mAudioInDev.Set(selectedName);
+      changed = true;
+    }
+
+    if (strcmp(mState.mAudioOutDev.Get(), selectedName))
+    {
+      mState.mAudioOutDev.Set(selectedName);
+      changed = true;
+    }
+  }
+
+  if (mState.mAudioInChanR != mState.mAudioInChanL)
+  {
+    mState.mAudioInChanR = mState.mAudioInChanL;
+    changed = true;
+  }
+
+  return changed;
 }
 
 int IPlugAPPHost::GetMIDIPortNumber(ERoute direction, const char* nameToTest) const
@@ -407,12 +507,9 @@ bool IPlugAPPHost::RestoreActiveAudioStateAfterFailure(const char* message)
   }
 
   ProbeAudioIO();
-  const int inputID =
-#if defined OS_WIN
-    (mState.mAudioDriverType == kDeviceASIO) ? GetAudioDeviceIdx(mState.mAudioOutDev.Get()) :
-#endif
-    GetAudioDeviceIdx(mState.mAudioInDev.Get());
-  const int outputID = GetAudioDeviceIdx(mState.mAudioOutDev.Get());
+  NormalizeSingleAudioDeviceState(true);
+  const int inputID = GetAudioDeviceIdx(mState.mAudioOutDev.Get());
+  const int outputID = inputID;
 
   if (inputID != -1 && outputID != -1)
     InitAudio(inputID, outputID, mState.mAudioSR, mState.mBufferSize);
@@ -460,48 +557,24 @@ bool IPlugAPPHost::TryToChangeAudioDriverType()
 
 bool IPlugAPPHost::TryToChangeAudio()
 {
-  int inputID = -1;
-  int outputID = -1;
-
-#if defined OS_WIN
-  if(mState.mAudioDriverType == kDeviceASIO)
-    inputID = GetAudioDeviceIdx(mState.mAudioOutDev.Get());
-  else
-    inputID = GetAudioDeviceIdx(mState.mAudioInDev.Get());
-#elif defined OS_MAC
-  inputID = GetAudioDeviceIdx(mState.mAudioInDev.Get());
-#else
-  #error NOT IMPLEMENTED
-#endif
-  outputID = GetAudioDeviceIdx(mState.mAudioOutDev.Get());
-
+  NormalizeSingleAudioDeviceState(true);
+  int inputID = GetAudioDeviceIdx(mState.mAudioOutDev.Get());
+  int outputID = inputID;
   bool failedToFindDevice = false;
   bool resetToDefault = false;
 
-  if (inputID == -1)
+  if (inputID == -1 || outputID == -1)
   {
-    if (mDefaultInputDev > -1)
+    auto sharedAudioDevs = GetSharedAudioDevs();
+
+    if (sharedAudioDevs.size())
     {
       resetToDefault = true;
-      inputID = mDefaultInputDev;
-
-      if (mAudioInputDevs.size())
-        mState.mAudioInDev.Set(GetAudioDeviceName(inputID).c_str());
-    }
-    else
-      failedToFindDevice = true;
-  }
-
-  if (outputID == -1)
-  {
-    if (mDefaultOutputDev > -1)
-    {
-      resetToDefault = true;
-
-      outputID = mDefaultOutputDev;
-
-      if (mAudioOutputDevs.size())
-        mState.mAudioOutDev.Set(GetAudioDeviceName(outputID).c_str());
+      inputID = sharedAudioDevs[0];
+      outputID = sharedAudioDevs[0];
+      const auto deviceName = GetAudioDeviceName(outputID);
+      mState.mAudioInDev.Set(deviceName.c_str());
+      mState.mAudioOutDev.Set(deviceName.c_str());
     }
     else
       failedToFindDevice = true;
