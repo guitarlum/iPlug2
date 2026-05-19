@@ -912,6 +912,8 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink, const CVTimeSt
   if (mTextFieldView) [self endUserInput ];
   IMouseInfo info = [self getMouseLeft:pEvent];
   float d = [pEvent deltaY];
+  if ([pEvent isDirectionInvertedFromDevice])
+    d = -d;
   if (mGraphics)
     mGraphics->OnMouseWheel(info.x, info.y, info.ms, d);
 }
