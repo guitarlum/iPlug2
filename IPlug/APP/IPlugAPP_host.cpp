@@ -61,7 +61,12 @@ bool IPlugAPPHost::Init()
   if (!InitState())
     return false;
   
-  TryToChangeAudioDriverType(); // will init RTAudio with an API type based on gState->mAudioDriverType
+  if (!TryToChangeAudioDriverType()) // will init RTAudio with an API type based on gState->mAudioDriverType
+  {
+    mState.mAudioDriverType = 0;
+    if (!TryToChangeAudioDriverType())
+      return false;
+  }
   ProbeAudioIO(); // find out what audio IO devs are available and put their IDs in the global variables gAudioInputDevs / gAudioOutputDevs
   InitMidi(); // creates RTMidiIn and RTMidiOut objects
   ProbeMidiIO(); // find out what midi IO devs are available and put their names in the global variables gMidiInputDevs / gMidiOutputDevs
@@ -264,12 +269,34 @@ void IPlugAPPHost::ProbeAudioIO()
   mAudioInputDevs.clear();
   mAudioOutputDevs.clear();
   mAudioIDDevNames.clear();
+  mDefaultInputDev = -1;
+  mDefaultOutputDev = -1;
 
-  uint32_t nDevices = mDAC->getDeviceCount();
+  if (!mDAC)
+    return;
+
+  uint32_t nDevices = 0;
+  try
+  {
+    nDevices = mDAC->getDeviceCount();
+  }
+  catch (RtAudioError& e)
+  {
+    e.printMessage();
+    return;
+  }
 
   for (int i=0; i<nDevices; i++)
   {
-    info = mDAC->getDeviceInfo(i);
+    try
+    {
+      info = mDAC->getDeviceInfo(i);
+    }
+    catch (RtAudioError& e)
+    {
+      e.printMessage();
+      continue;
+    }
     std::string deviceName = info.name;
     
 #ifdef OS_MAC
@@ -364,6 +391,36 @@ bool IPlugAPPHost::MIDISettingsInStateAreEqual(AppState& os, AppState& ns)
   return true;
 }
 
+bool IPlugAPPHost::RestoreActiveAudioStateAfterFailure(const char* message)
+{
+  if (message && message[0])
+    MessageBox(gHWND, message, "Audio Error", MB_OK);
+
+  if (mState == mActiveState)
+    return false;
+
+  mState = mActiveState;
+  if (!TryToChangeAudioDriverType())
+  {
+    UpdateINI();
+    return false;
+  }
+
+  ProbeAudioIO();
+  const int inputID =
+#if defined OS_WIN
+    (mState.mAudioDriverType == kDeviceASIO) ? GetAudioDeviceIdx(mState.mAudioOutDev.Get()) :
+#endif
+    GetAudioDeviceIdx(mState.mAudioInDev.Get());
+  const int outputID = GetAudioDeviceIdx(mState.mAudioOutDev.Get());
+
+  if (inputID != -1 && outputID != -1)
+    InitAudio(inputID, outputID, mState.mAudioSR, mState.mBufferSize);
+
+  UpdateINI();
+  return false;
+}
+
 bool IPlugAPPHost::TryToChangeAudioDriverType()
 {
   CloseAudio();
@@ -373,19 +430,27 @@ bool IPlugAPPHost::TryToChangeAudioDriverType()
     mDAC = nullptr;
   }
 
+  try
+  {
 #if defined OS_WIN
-  if(mState.mAudioDriverType == kDeviceASIO)
-    mDAC = std::make_unique<RtAudio>(RtAudio::WINDOWS_ASIO);
-  else
-    mDAC = std::make_unique<RtAudio>(RtAudio::WINDOWS_DS);
+    if(mState.mAudioDriverType == kDeviceASIO)
+      mDAC = std::make_unique<RtAudio>(RtAudio::WINDOWS_ASIO);
+    else
+      mDAC = std::make_unique<RtAudio>(RtAudio::WINDOWS_DS);
 #elif defined OS_MAC
-  if(mState.mAudioDriverType == kDeviceCoreAudio)
-    mDAC = std::make_unique<RtAudio>(RtAudio::MACOSX_CORE);
-  //else
-  //mDAC = std::make_unique<RtAudio>(RtAudio::UNIX_JACK);
+    if(mState.mAudioDriverType == kDeviceCoreAudio)
+      mDAC = std::make_unique<RtAudio>(RtAudio::MACOSX_CORE);
+    //else
+    //mDAC = std::make_unique<RtAudio>(RtAudio::UNIX_JACK);
 #else
   #error NOT IMPLEMENTED
 #endif
+  }
+  catch (RtAudioError& e)
+  {
+    e.printMessage();
+    mDAC = nullptr;
+  }
 
   if(mDAC)
     return true;
@@ -450,11 +515,14 @@ bool IPlugAPPHost::TryToChangeAudio()
   }
 
   if (failedToFindDevice)
-    MessageBox(gHWND, "Please check your soundcard settings in Preferences", "Error", MB_OK);
+    return RestoreActiveAudioStateAfterFailure("Audio device is not available. Reverting to the previous working settings.");
 
   if (inputID != -1 && outputID != -1)
   {
-    return InitAudio(inputID, outputID, mState.mAudioSR, mState.mBufferSize);
+    if (InitAudio(inputID, outputID, mState.mAudioSR, mState.mBufferSize))
+      return true;
+
+    return RestoreActiveAudioStateAfterFailure("Audio device failed to open. Reverting to the previous working settings.");
   }
 
   return false;
@@ -558,8 +626,15 @@ void IPlugAPPHost::CloseAudio()
     {
       mAudioEnding = true;
     
-      while (!mAudioDone)
+      int waitCount = 0;
+      while (!mAudioDone && waitCount < 200)
+      {
         Sleep(10);
+        ++waitCount;
+      }
+
+      if (!mAudioDone)
+        DBGMSG("VoLum: CloseAudio timed out waiting for callback fade; aborting stream\n");
       
       try
       {
@@ -671,12 +746,12 @@ bool IPlugAPPHost::InitAudio(uint32_t inId, uint32_t outId, uint32_t sr, uint32_
   options.flags = RTAUDIO_NONINTERLEAVED;
   // options.streamName = BUNDLE_NAME; // JACK stream name, not used on other streams
 
-  mBufIndex = 0;
   mSamplesElapsed = 0;
   mSampleRate = (double) sr;
   mVecWait = 0;
   mAudioEnding = false;
   mAudioDone = false;
+  mAudioVectorAccumulator.Reset(pluginIns, pluginOuts, APP_SIGNAL_VECTOR_SIZE);
   
   mIPlug->SetBlockSize(APP_SIGNAL_VECTOR_SIZE);
   mIPlug->SetSampleRate(mSampleRate);
@@ -799,7 +874,7 @@ int IPlugAPPHost::AudioCallback(void* pOutputBuffer, void* pInputBuffer, uint32_
 
   if (startWait && !_this->mAudioDone)
   {
-    if (doFade)
+    if (doFade && pInputBufferD != nullptr && devIns > 0)
       ApplyFades(pInputBufferD, devIns, nFrames, _this->mAudioEnding);
 
     // VoLum: zero the entire output device buffer so that physical outputs we
@@ -810,80 +885,47 @@ int IPlugAPPHost::AudioCallback(void* pOutputBuffer, void* pInputBuffer, uint32_
 
     for (int i = 0; i < (int) nFrames; i++)
     {
-      _this->mBufIndex %= APP_SIGNAL_VECTOR_SIZE;
-
-      if (_this->mBufIndex == 0)
+      if (_this->mAudioVectorAccumulator.HasOutput())
       {
-        // VoLum: route the user-selected device input channel to plugin in[0]
-        // (and the R selection to in[1] if the plugin has 2 inputs). The old
-        // behavior wired plugin in[c] to device in[c], which ignored the
-        // dialog selection entirely.
-        if (pluginIns >= 1)
-        {
-          const int devCh = (inOffset0 < devIns) ? inOffset0 : 0;
-          _this->mInputBufPtrs.Set(0, (pInputBufferD + (devCh * nFrames)) + i);
-        }
-        if (pluginIns >= 2)
-        {
-          const int wantR = _this->mActiveOutOffsetR; // unused; placeholder to keep clarity
-          (void) wantR;
-          // For inputs we always have at most one selectable "L" via the
-          // dialog; if a future plugin needs a stereo input we mirror L into
-          // both, since the iPlug2 dialog only exposes a single input pair
-          // and R-input has historically been a no-op for this codebase.
-          const int devCh = (inOffset0 < devIns) ? inOffset0 : 0;
-          _this->mInputBufPtrs.Set(1, (pInputBufferD + (devCh * nFrames)) + i);
-        }
-        for (int c = 2; c < pluginIns; c++)
-        {
-          _this->mInputBufPtrs.Set(c, (pInputBufferD + (0 * nFrames)) + i);
-        }
-
-        // VoLum: route plugin out[0] to the user-selected device output
-        // channel (L), out[1] to the R selection, and any extra plugin
-        // outputs to the next device channels (clamped). The output buffer
-        // was zeroed above, so unused device channels stay silent.
+        const int readIdx = _this->mAudioVectorAccumulator.GetOutputReadIndex();
         if (pluginOuts >= 1)
         {
           const int devCh = (outOffsetL < devOuts) ? outOffsetL : 0;
-          _this->mOutputBufPtrs.Set(0, (pOutputBufferD + (devCh * nFrames)) + i);
+          pOutputBufferD[devCh * nFrames + i] = _this->mAudioVectorAccumulator.GetOutputChannel(0)[readIdx] * APP_MULT;
         }
         if (pluginOuts >= 2)
         {
           const int devCh = (outOffsetR < devOuts) ? outOffsetR : ((outOffsetL + 1 < devOuts) ? outOffsetL + 1 : outOffsetL);
-          _this->mOutputBufPtrs.Set(1, (pOutputBufferD + (devCh * nFrames)) + i);
+          pOutputBufferD[devCh * nFrames + i] = _this->mAudioVectorAccumulator.GetOutputChannel(1)[readIdx] * APP_MULT;
         }
         for (int c = 2; c < pluginOuts; c++)
         {
           const int devCh = (c < devOuts) ? c : (devOuts - 1);
-          _this->mOutputBufPtrs.Set(c, (pOutputBufferD + (devCh * nFrames)) + i);
+          pOutputBufferD[devCh * nFrames + i] = _this->mAudioVectorAccumulator.GetOutputChannel(c)[readIdx] * APP_MULT;
         }
+        _this->mAudioVectorAccumulator.PopOutputFrame();
+      }
 
-        _this->mIPlug->AppProcess(_this->mInputBufPtrs.GetList(), _this->mOutputBufPtrs.GetList(), APP_SIGNAL_VECTOR_SIZE);
+      const int writeIdx = _this->mAudioVectorAccumulator.GetInputWriteIndex();
+      const double inputSample = (pInputBufferD != nullptr && devIns > 0)
+        ? pInputBufferD[((inOffset0 < devIns) ? inOffset0 : 0) * nFrames + i]
+        : 0.0;
+      for (int c = 0; c < pluginIns; c++)
+      {
+        // The dialog exposes one input pair; preserve the existing behavior of
+        // mirroring the selected L input across all plugin inputs.
+        _this->mAudioVectorAccumulator.GetInputChannel(c)[writeIdx] = inputSample;
+      }
 
+      if (_this->mAudioVectorAccumulator.PushInputFrame())
+      {
+        _this->mIPlug->AppProcess(
+          _this->mAudioVectorAccumulator.GetInputPtrs(),
+          _this->mAudioVectorAccumulator.GetOutputPtrs(),
+          APP_SIGNAL_VECTOR_SIZE);
+        _this->mAudioVectorAccumulator.CommitProcessedOutput();
         _this->mSamplesElapsed += APP_SIGNAL_VECTOR_SIZE;
       }
-
-      // VoLum: only scale the device channels we actually wrote to. Scaling
-      // every output channel would also touch the zeros we just memset (a
-      // no-op for APP_MULT == 1.0, but a correctness hazard if APP_MULT ever
-      // changes) and obscures intent.
-      if (pluginOuts >= 1 && outOffsetL < devOuts)
-        pOutputBufferD[outOffsetL * nFrames + i] *= APP_MULT;
-      if (pluginOuts >= 2)
-      {
-        const int devCh = (outOffsetR < devOuts) ? outOffsetR : ((outOffsetL + 1 < devOuts) ? outOffsetL + 1 : outOffsetL);
-        if (devCh != outOffsetL && devCh < devOuts)
-          pOutputBufferD[devCh * nFrames + i] *= APP_MULT;
-      }
-      for (int c = 2; c < pluginOuts; c++)
-      {
-        const int devCh = (c < devOuts) ? c : (devOuts - 1);
-        if (devCh != outOffsetL && (pluginOuts < 2 || devCh != outOffsetR))
-          pOutputBufferD[devCh * nFrames + i] *= APP_MULT;
-      }
-
-      _this->mBufIndex++;
     }
 
     if (doFade)

@@ -351,8 +351,22 @@ WDL_DLGRET IPlugAPPHost::PreferencesDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wPar
             {
               mState.mAudioDriverType = v;
 
-              _this->TryToChangeAudioDriverType();
+              if (!_this->TryToChangeAudioDriverType())
+              {
+                _this->RestoreActiveAudioStateAfterFailure("Audio driver is not available. Reverting to the previous working settings.");
+                SendDlgItemMessage(hwndDlg, IDC_COMBO_AUDIO_DRIVER, CB_SETCURSEL, mState.mAudioDriverType, 0);
+                _this->PopulateAudioDialogs(hwndDlg);
+                break;
+              }
               _this->ProbeAudioIO();
+
+              if (!_this->mAudioInputDevs.size() && !_this->mAudioOutputDevs.size())
+              {
+                _this->RestoreActiveAudioStateAfterFailure("No audio devices are available for this driver. Reverting to the previous working settings.");
+                SendDlgItemMessage(hwndDlg, IDC_COMBO_AUDIO_DRIVER, CB_SETCURSEL, mState.mAudioDriverType, 0);
+                _this->PopulateAudioDialogs(hwndDlg);
+                break;
+              }
 
               if (_this->mAudioInputDevs.size())
                 mState.mAudioInDev.Set(_this->GetAudioDeviceName(_this->mAudioInputDevs[0]).c_str());

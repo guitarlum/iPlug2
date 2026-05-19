@@ -41,6 +41,7 @@
 #include "IPlugConstants.h"
 
 #include "IPlugAPP.h"
+#include "VoLumIPlugAPPVectorAccumulator.h"
 
 #include "config.h"
 
@@ -202,6 +203,7 @@ public:
   bool InitAudio(uint32_t inId, uint32_t outId, uint32_t sr, uint32_t iovs);
   bool AudioSettingsInStateAreEqual(AppState& os, AppState& ns);
   bool MIDISettingsInStateAreEqual(AppState& os, AppState& ns);
+  bool RestoreActiveAudioStateAfterFailure(const char* message);
 
   bool TryToChangeAudioDriverType();
   bool TryToChangeAudio();
@@ -234,7 +236,7 @@ private:
   uint32_t mSamplesElapsed = 0;
   uint32_t mVecWait = 0;
   uint32_t mBufferSize = 512;
-  uint32_t mBufIndex = 0; // index for signal vector, loops from 0 to mSigVS
+  VoLumIPlugAPPVectorAccumulator mAudioVectorAccumulator;
   bool mExiting = false;
   bool mAudioEnding = false;
   bool mAudioDone = false;
