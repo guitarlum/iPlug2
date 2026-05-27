@@ -12,14 +12,6 @@
 #include "config.h"
 #include "resource.h"
 
-#if !defined IDC_COMBO_AUDIO_DEV && defined IDC_COMBO_AUDIO_IN_DEV
-#define IDC_COMBO_AUDIO_DEV IDC_COMBO_AUDIO_IN_DEV
-#endif
-
-#if !defined IDC_COMBO_AUDIO_IN && defined IDC_COMBO_AUDIO_IN_L
-#define IDC_COMBO_AUDIO_IN IDC_COMBO_AUDIO_IN_L
-#endif
-
 #ifdef OS_WIN
 #include "asio.h"
 #include <shellapi.h>
@@ -78,20 +70,27 @@ void IPlugAPPHost::PopulateSampleRateList(HWND hwndDlg, RtAudio::DeviceInfo* inp
 
 void IPlugAPPHost::PopulateAudioInputList(HWND hwndDlg, RtAudio::DeviceInfo* info)
 {
-  WDL_String buf;
-
-  SendDlgItemMessage(hwndDlg,IDC_COMBO_AUDIO_IN,CB_RESETCONTENT,0,0);
-
   if(!info->probed)
     return;
 
+  WDL_String buf;
+
+  SendDlgItemMessage(hwndDlg,IDC_COMBO_AUDIO_IN_L,CB_RESETCONTENT,0,0);
+  SendDlgItemMessage(hwndDlg,IDC_COMBO_AUDIO_IN_R,CB_RESETCONTENT,0,0);
+
+  // VoLum: populate every available device input channel (was off-by-one:
+  // upstream looped `i < inputChannels - 1` and added the last entry to the
+  // R combo only via a "// TEMP" hack, so the L combo was always missing the
+  // device's last input).
   for (int i = 0; i < (int) info->inputChannels; i++)
   {
     buf.SetFormatted(20, "%i", i+1);
-    SendDlgItemMessage(hwndDlg,IDC_COMBO_AUDIO_IN,CB_ADDSTRING,0,(LPARAM)buf.Get());
+    SendDlgItemMessage(hwndDlg,IDC_COMBO_AUDIO_IN_L,CB_ADDSTRING,0,(LPARAM)buf.Get());
+    SendDlgItemMessage(hwndDlg,IDC_COMBO_AUDIO_IN_R,CB_ADDSTRING,0,(LPARAM)buf.Get());
   }
 
-  SendDlgItemMessage(hwndDlg,IDC_COMBO_AUDIO_IN,CB_SETCURSEL, mState.mAudioInChanL - 1, 0);
+  SendDlgItemMessage(hwndDlg,IDC_COMBO_AUDIO_IN_L,CB_SETCURSEL, mState.mAudioInChanL - 1, 0);
+  SendDlgItemMessage(hwndDlg,IDC_COMBO_AUDIO_IN_R,CB_SETCURSEL, mState.mAudioInChanR - 1, 0);
 }
 
 void IPlugAPPHost::PopulateAudioOutputList(HWND hwndDlg, RtAudio::DeviceInfo* info)
@@ -123,44 +122,59 @@ void IPlugAPPHost::PopulateDriverSpecificControls(HWND hwndDlg)
   int driverType = (int) SendDlgItemMessage(hwndDlg, IDC_COMBO_AUDIO_DRIVER, CB_GETCURSEL, 0, 0);
   if(driverType == kDeviceASIO)
   {
+    ComboBox_Enable(GetDlgItem(hwndDlg, IDC_COMBO_AUDIO_IN_DEV), FALSE);
     Button_Enable(GetDlgItem(hwndDlg, IDC_BUTTON_OS_DEV_SETTINGS), TRUE);
   }
   else
   {
+    ComboBox_Enable(GetDlgItem(hwndDlg, IDC_COMBO_AUDIO_IN_DEV), TRUE);
     Button_Enable(GetDlgItem(hwndDlg, IDC_BUTTON_OS_DEV_SETTINGS), FALSE);
   }
 #endif
 
-  int audioDevIdx = 0;
-  auto sharedAudioDevs = GetSharedAudioDevs();
+  int indevidx = 0;
+  int outdevidx = 0;
 
-  SendDlgItemMessage(hwndDlg,IDC_COMBO_AUDIO_DEV,CB_RESETCONTENT,0,0);
+  SendDlgItemMessage(hwndDlg,IDC_COMBO_AUDIO_IN_DEV,CB_RESETCONTENT,0,0);
+  SendDlgItemMessage(hwndDlg,IDC_COMBO_AUDIO_OUT_DEV,CB_RESETCONTENT,0,0);
 
-  for (int i = 0; i<sharedAudioDevs.size(); i++)
+  for (int i = 0; i<mAudioInputDevs.size(); i++)
   {
-    const auto deviceName = GetAudioDeviceName(sharedAudioDevs[i]);
-    SendDlgItemMessage(hwndDlg,IDC_COMBO_AUDIO_DEV,CB_ADDSTRING,0,(LPARAM)deviceName.c_str());
+    SendDlgItemMessage(hwndDlg,IDC_COMBO_AUDIO_IN_DEV,CB_ADDSTRING,0,(LPARAM)GetAudioDeviceName(mAudioInputDevs[i]).c_str());
 
-    if(!strcmp(deviceName.c_str(), mState.mAudioOutDev.Get()) ||
-       !strcmp(deviceName.c_str(), mState.mAudioInDev.Get()))
-      audioDevIdx = i;
+    if(!strcmp(GetAudioDeviceName(mAudioInputDevs[i]).c_str(), mState.mAudioInDev.Get()))
+      indevidx = i;
   }
 
-  SendDlgItemMessage(hwndDlg,IDC_COMBO_AUDIO_DEV,CB_SETCURSEL, sharedAudioDevs.size() ? audioDevIdx : -1, 0);
+  for (int i = 0; i<mAudioOutputDevs.size(); i++)
+  {
+    SendDlgItemMessage(hwndDlg,IDC_COMBO_AUDIO_OUT_DEV,CB_ADDSTRING,0,(LPARAM)GetAudioDeviceName(mAudioOutputDevs[i]).c_str());
+
+    if(!strcmp(GetAudioDeviceName(mAudioOutputDevs[i]).c_str(), mState.mAudioOutDev.Get()))
+      outdevidx = i;
+  }
+
+#ifdef OS_WIN
+  if(driverType == kDeviceASIO)
+    SendDlgItemMessage(hwndDlg,IDC_COMBO_AUDIO_IN_DEV,CB_SETCURSEL, outdevidx, 0);
+  else
+#endif
+    SendDlgItemMessage(hwndDlg,IDC_COMBO_AUDIO_IN_DEV,CB_SETCURSEL, indevidx, 0);
+
+  SendDlgItemMessage(hwndDlg,IDC_COMBO_AUDIO_OUT_DEV,CB_SETCURSEL, outdevidx, 0);
 
   RtAudio::DeviceInfo inputDevInfo;
   RtAudio::DeviceInfo outputDevInfo;
 
-  if (sharedAudioDevs.size())
+  if (mAudioInputDevs.size())
   {
-    inputDevInfo = mDAC->getDeviceInfo(sharedAudioDevs[audioDevIdx]);
+    inputDevInfo = mDAC->getDeviceInfo(mAudioInputDevs[indevidx]);
     PopulateAudioInputList(hwndDlg, &inputDevInfo);
-    outputDevInfo = inputDevInfo;
-    PopulateAudioOutputList(hwndDlg, &outputDevInfo);
   }
-  else
+
+  if (mAudioOutputDevs.size())
   {
-    PopulateAudioInputList(hwndDlg, &inputDevInfo);
+    outputDevInfo = mDAC->getDeviceInfo(mAudioOutputDevs[outdevidx]);
     PopulateAudioOutputList(hwndDlg, &outputDevInfo);
   }
 
@@ -351,8 +365,7 @@ WDL_DLGRET IPlugAPPHost::PreferencesDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wPar
               }
               _this->ProbeAudioIO();
 
-              auto sharedAudioDevs = _this->GetSharedAudioDevs();
-              if (!sharedAudioDevs.size())
+              if (!_this->mAudioInputDevs.size() && !_this->mAudioOutputDevs.size())
               {
                 _this->RestoreActiveAudioStateAfterFailure("No audio devices are available for this driver. Reverting to the previous working settings.");
                 SendDlgItemMessage(hwndDlg, IDC_COMBO_AUDIO_DRIVER, CB_SETCURSEL, mState.mAudioDriverType, 0);
@@ -360,13 +373,13 @@ WDL_DLGRET IPlugAPPHost::PreferencesDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wPar
                 break;
               }
 
-              const auto deviceName = _this->GetAudioDeviceName(sharedAudioDevs[0]);
-              mState.mAudioInDev.Set(deviceName.c_str());
-              mState.mAudioOutDev.Set(deviceName.c_str());
+              if (_this->mAudioInputDevs.size())
+                mState.mAudioInDev.Set(_this->GetAudioDeviceName(_this->mAudioInputDevs[0]).c_str());
+
+              if (_this->mAudioOutputDevs.size())
+                mState.mAudioOutDev.Set(_this->GetAudioDeviceName(_this->mAudioOutputDevs[0]).c_str());
 
               // Reset IO
-              mState.mAudioInChanL = 1;
-              mState.mAudioInChanR = 1;
               mState.mAudioOutChanL = 1;
               mState.mAudioOutChanR = 2;
 
@@ -375,16 +388,27 @@ WDL_DLGRET IPlugAPPHost::PreferencesDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wPar
           }
           break;
 
-        case IDC_COMBO_AUDIO_DEV:
+        case IDC_COMBO_AUDIO_IN_DEV:
           if (HIWORD(wParam) == CBN_SELCHANGE)
           {
-            int idx = (int) SendDlgItemMessage(hwndDlg, IDC_COMBO_AUDIO_DEV, CB_GETCURSEL, 0, 0);
-            getComboString(mState.mAudioOutDev, IDC_COMBO_AUDIO_DEV, idx);
-            mState.mAudioInDev.Set(mState.mAudioOutDev.Get());
+            int idx = (int) SendDlgItemMessage(hwndDlg, IDC_COMBO_AUDIO_IN_DEV, CB_GETCURSEL, 0, 0);
+            getComboString(mState.mAudioInDev, IDC_COMBO_AUDIO_IN_DEV, idx);
 
             // Reset IO
             mState.mAudioInChanL = 1;
-            mState.mAudioInChanR = 1;
+            mState.mAudioInChanR = 2;
+
+            _this->PopulateDriverSpecificControls(hwndDlg);
+          }
+          break;
+
+        case IDC_COMBO_AUDIO_OUT_DEV:
+          if (HIWORD(wParam) == CBN_SELCHANGE)
+          {
+            int idx = (int) SendDlgItemMessage(hwndDlg, IDC_COMBO_AUDIO_OUT_DEV, CB_GETCURSEL, 0, 0);
+            getComboString(mState.mAudioOutDev, IDC_COMBO_AUDIO_OUT_DEV, idx);
+
+            // Reset IO
             mState.mAudioOutChanL = 1;
             mState.mAudioOutChanR = 2;
 
@@ -392,23 +416,39 @@ WDL_DLGRET IPlugAPPHost::PreferencesDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wPar
           }
           break;
 
-        case IDC_COMBO_AUDIO_IN:
+        case IDC_COMBO_AUDIO_IN_L:
           if (HIWORD(wParam) == CBN_SELCHANGE)
           {
-            mState.mAudioInChanL = (int) SendDlgItemMessage(hwndDlg, IDC_COMBO_AUDIO_IN, CB_GETCURSEL, 0, 0) + 1;
-            mState.mAudioInChanR = mState.mAudioInChanL;
+            // VoLum: independent L/R selection. Upstream forced R = L + 1
+            // ("// TEMP") which fought the user's own R choice and also
+            // pushed R past the device's last channel for an interface like
+            // the Babyface Pro FS when the last input was selected as L.
+            mState.mAudioInChanL = (int) SendDlgItemMessage(hwndDlg, IDC_COMBO_AUDIO_IN_L, CB_GETCURSEL, 0, 0) + 1;
+          }
+          break;
+
+        case IDC_COMBO_AUDIO_IN_R:
+          // VoLum: fix missing braces (upstream's body had only the SetCurSel
+          // call inside the if, leaving the GetCurSel-into-state line
+          // unconditional and effectively dead). Now the R selection is
+          // captured into state correctly when the user changes it.
+          if (HIWORD(wParam) == CBN_SELCHANGE)
+          {
+            mState.mAudioInChanR = (int) SendDlgItemMessage(hwndDlg, IDC_COMBO_AUDIO_IN_R, CB_GETCURSEL, 0, 0) + 1;
           }
           break;
 
         case IDC_COMBO_AUDIO_OUT_L:
           if (HIWORD(wParam) == CBN_SELCHANGE)
           {
-            // VoLum keeps stereo output selection even though the input is mono.
+            // VoLum: independent L/R output selection (same rationale as
+            // IDC_COMBO_AUDIO_IN_L above).
             mState.mAudioOutChanL = (int) SendDlgItemMessage(hwndDlg, IDC_COMBO_AUDIO_OUT_L, CB_GETCURSEL, 0, 0) + 1;
           }
           break;
 
         case IDC_COMBO_AUDIO_OUT_R:
+          // VoLum: same brace/scoping fix as IDC_COMBO_AUDIO_IN_R.
           if (HIWORD(wParam) == CBN_SELCHANGE)
           {
             mState.mAudioOutChanR = (int) SendDlgItemMessage(hwndDlg, IDC_COMBO_AUDIO_OUT_R, CB_GETCURSEL, 0, 0) + 1;

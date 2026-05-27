@@ -201,8 +201,6 @@ public:
   * @param name The name of the audio device to test
   * @return The integer index RTAudio has given the audio device */
   int GetAudioDeviceIdx(const char* name) const;
-  std::vector<uint32_t> GetSharedAudioDevs() const;
-  bool NormalizeSingleAudioDeviceState(bool preferOutputDevice);
   
   /** @param direction Either kInput or kOutput
    * @param name The name of the midi device
