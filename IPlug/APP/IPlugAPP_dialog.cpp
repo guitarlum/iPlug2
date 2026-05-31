@@ -76,21 +76,19 @@ void IPlugAPPHost::PopulateAudioInputList(HWND hwndDlg, RtAudio::DeviceInfo* inf
   WDL_String buf;
 
   SendDlgItemMessage(hwndDlg,IDC_COMBO_AUDIO_IN_L,CB_RESETCONTENT,0,0);
-  SendDlgItemMessage(hwndDlg,IDC_COMBO_AUDIO_IN_R,CB_RESETCONTENT,0,0);
 
   // VoLum: populate every available device input channel (was off-by-one:
   // upstream looped `i < inputChannels - 1` and added the last entry to the
-  // R combo only via a "// TEMP" hack, so the L combo was always missing the
-  // device's last input).
+  // R combo only via a "// TEMP" hack, so the visible input combo was always
+  // missing the device's last input).
   for (int i = 0; i < (int) info->inputChannels; i++)
   {
     buf.SetFormatted(20, "%i", i+1);
     SendDlgItemMessage(hwndDlg,IDC_COMBO_AUDIO_IN_L,CB_ADDSTRING,0,(LPARAM)buf.Get());
-    SendDlgItemMessage(hwndDlg,IDC_COMBO_AUDIO_IN_R,CB_ADDSTRING,0,(LPARAM)buf.Get());
   }
 
   SendDlgItemMessage(hwndDlg,IDC_COMBO_AUDIO_IN_L,CB_SETCURSEL, mState.mAudioInChanL - 1, 0);
-  SendDlgItemMessage(hwndDlg,IDC_COMBO_AUDIO_IN_R,CB_SETCURSEL, mState.mAudioInChanR - 1, 0);
+  mState.mAudioInChanR = mState.mAudioInChanL;
 }
 
 void IPlugAPPHost::PopulateAudioOutputList(HWND hwndDlg, RtAudio::DeviceInfo* info)
@@ -396,7 +394,7 @@ WDL_DLGRET IPlugAPPHost::PreferencesDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wPar
 
             // Reset IO
             mState.mAudioInChanL = 1;
-            mState.mAudioInChanR = 2;
+            mState.mAudioInChanR = 1;
 
             _this->PopulateDriverSpecificControls(hwndDlg);
           }
@@ -419,22 +417,17 @@ WDL_DLGRET IPlugAPPHost::PreferencesDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wPar
         case IDC_COMBO_AUDIO_IN_L:
           if (HIWORD(wParam) == CBN_SELCHANGE)
           {
-            // VoLum: independent L/R selection. Upstream forced R = L + 1
-            // ("// TEMP") which fought the user's own R choice and also
-            // pushed R past the device's last channel for an interface like
-            // the Babyface Pro FS when the last input was selected as L.
+            // VoLum: the app consumes one mono guitar input and mirrors it to
+            // all plugin inputs, so expose a single input-channel selector.
             mState.mAudioInChanL = (int) SendDlgItemMessage(hwndDlg, IDC_COMBO_AUDIO_IN_L, CB_GETCURSEL, 0, 0) + 1;
+            mState.mAudioInChanR = mState.mAudioInChanL;
           }
           break;
 
         case IDC_COMBO_AUDIO_IN_R:
-          // VoLum: fix missing braces (upstream's body had only the SetCurSel
-          // call inside the if, leaving the GetCurSel-into-state line
-          // unconditional and effectively dead). Now the R selection is
-          // captured into state correctly when the user changes it.
           if (HIWORD(wParam) == CBN_SELCHANGE)
           {
-            mState.mAudioInChanR = (int) SendDlgItemMessage(hwndDlg, IDC_COMBO_AUDIO_IN_R, CB_GETCURSEL, 0, 0) + 1;
+            mState.mAudioInChanR = mState.mAudioInChanL;
           }
           break;
 

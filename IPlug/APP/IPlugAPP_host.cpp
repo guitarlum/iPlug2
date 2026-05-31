@@ -120,7 +120,8 @@ bool IPlugAPPHost::InitState()
 
       //audio
       mState.mAudioInChanL = GetPrivateProfileInt("audio", "in1", 1, mINIPath.Get()); // 1 is first audio input
-      mState.mAudioInChanR = GetPrivateProfileInt("audio", "in2", 2, mINIPath.Get());
+      // VoLum uses one mono guitar input and mirrors it across plugin inputs.
+      mState.mAudioInChanR = mState.mAudioInChanL;
       mState.mAudioOutChanL = GetPrivateProfileInt("audio", "out1", 1, mINIPath.Get()); // 1 is first audio output
       mState.mAudioOutChanR = GetPrivateProfileInt("audio", "out2", 2, mINIPath.Get());
       //mState.mAudioInIsMono = GetPrivateProfileInt("audio", "monoinput", 0, mINIPath.Get());
@@ -181,7 +182,7 @@ void IPlugAPPHost::UpdateINI()
 
   sprintf(buf, "%u", mState.mAudioInChanL);
   WritePrivateProfileString("audio", "in1", buf, ini);
-  sprintf(buf, "%u", mState.mAudioInChanR);
+  sprintf(buf, "%u", mState.mAudioInChanL);
   WritePrivateProfileString("audio", "in2", buf, ini);
   sprintf(buf, "%u", mState.mAudioOutChanL);
   WritePrivateProfileString("audio", "out1", buf, ini);
@@ -373,7 +374,6 @@ bool IPlugAPPHost::AudioSettingsInStateAreEqual(AppState& os, AppState& ns)
   if (os.mAudioSR != ns.mAudioSR) return false;
   if (os.mBufferSize != ns.mBufferSize) return false;
   if (os.mAudioInChanL != ns.mAudioInChanL) return false;
-  if (os.mAudioInChanR != ns.mAudioInChanR) return false;
   if (os.mAudioOutChanL != ns.mAudioOutChanL) return false;
   if (os.mAudioOutChanR != ns.mAudioOutChanR) return false;
 //  if (os.mAudioInIsMono != ns.mAudioInIsMono) return false;
@@ -665,7 +665,7 @@ bool IPlugAPPHost::InitAudio(uint32_t inId, uint32_t outId, uint32_t sr, uint32_
   mOutputBufPtrs.Empty();
 
   // VoLum: open the device with enough channels to *include* the user's
-  // selection (1-based mAudioInChanL/R, mAudioOutChanL/R) and remember the
+  // selection (1-based mono mAudioInChanL, mAudioOutChanL/R) and remember the
   // 0-based offsets so AudioCallback can cherry-pick the right channels.
   // We keep firstChannel = 0 because some ASIO drivers misbehave when
   // firstChannel is non-zero with a partial channel count; opening with the
@@ -705,11 +705,10 @@ bool IPlugAPPHost::InitAudio(uint32_t inId, uint32_t outId, uint32_t sr, uint32_
   };
 
   const int wantInL  = devInChans  > 0 ? clamp1Based(mState.mAudioInChanL,  devInChans)  : 1;
-  const int wantInR  = devInChans  > 0 ? clamp1Based(mState.mAudioInChanR,  devInChans)  : 1;
   const int wantOutL = devOutChans > 0 ? clamp1Based(mState.mAudioOutChanL, devOutChans) : 1;
   const int wantOutR = devOutChans > 0 ? clamp1Based(mState.mAudioOutChanR, devOutChans) : 1;
 
-  int neededIn  = std::max({pluginIns,  wantInL,  wantInR});
+  int neededIn  = std::max(pluginIns,  wantInL);
   int neededOut = std::max({pluginOuts, wantOutL, wantOutR});
   if (devInChans  > 0) neededIn  = std::min(neededIn,  devInChans);
   if (devOutChans > 0) neededOut = std::min(neededOut, devOutChans);
