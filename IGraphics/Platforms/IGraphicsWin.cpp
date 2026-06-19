@@ -492,7 +492,11 @@ LRESULT CALLBACK IGraphicsWin::WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
       else
       {
         IMouseInfo info = pGraphics->GetMouseInfo(lParam, wParam);
-        float d = GET_WHEEL_DELTA_WPARAM(wParam) / WHEEL_DELTA;
+        // Cast before dividing: GET_WHEEL_DELTA_WPARAM is a short and WHEEL_DELTA
+        // is 120, so the original int/int division truncated every sub-notch
+        // delta to 0. Precision touchpads stream deltas < 120, which were dropped
+        // entirely, making trackpad scrolling stutter (only full notches moved).
+        float d = static_cast<float>(GET_WHEEL_DELTA_WPARAM(wParam)) / static_cast<float>(WHEEL_DELTA);
         const float scale = pGraphics->GetTotalScale();
         RECT r;
         GetWindowRect(hWnd, &r);
