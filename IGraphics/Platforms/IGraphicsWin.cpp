@@ -1713,6 +1713,105 @@ void IGraphicsWin::PromptForFile(WDL_String& fileName, WDL_String& path, EFileAc
   ReleaseMouseCapture();
 }
 
+void IGraphicsWin::PromptForFiles(WDL_String& path, std::vector<WDL_String>& fileNames, const char* ext)
+{
+  fileNames.clear();
+
+  if (!WindowIsOpen())
+    return;
+
+  // Generous buffer to hold "directory\0name1\0name2\0...\0\0" for many selections.
+  const int kBufLen = 64 * 1024;
+  std::vector<wchar_t> fnBuf(kBufLen, 0);
+
+  wchar_t dirCStr[_MAX_PATH];
+  dirCStr[0] = '\0';
+  UTF8ToUTF16(dirCStr, path.Get(), _MAX_PATH);
+
+  OPENFILENAMEW ofn;
+  memset(&ofn, 0, sizeof(OPENFILENAMEW));
+  ofn.lStructSize = sizeof(OPENFILENAMEW);
+  ofn.hwndOwner = (HWND) GetWindow();
+  ofn.lpstrFile = fnBuf.data();
+  ofn.nMaxFile = kBufLen - 1;
+  ofn.lpstrInitialDir = dirCStr;
+  ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_ALLOWMULTISELECT | OFN_EXPLORER;
+
+  wchar_t extStr[256];
+  wchar_t defExtStr[16];
+  if (CStringHasContents(ext))
+  {
+    int i, p, n = strlen(ext);
+    bool seperator = true;
+
+    for (i = 0, p = 0; i < n; ++i)
+    {
+      if (seperator)
+      {
+        if (p)
+          extStr[p++] = ';';
+        seperator = false;
+        extStr[p++] = '*';
+        extStr[p++] = '.';
+      }
+      if (ext[i] == ' ')
+        seperator = true;
+      else
+        extStr[p++] = ext[i];
+    }
+    extStr[p++] = '\0';
+    wcscpy(&extStr[p], extStr);
+    extStr[p + p] = '\0';
+    ofn.lpstrFilter = extStr;
+
+    for (i = 0, p = 0; i < n && ext[i] != ' '; ++i)
+      defExtStr[p++] = ext[i];
+    defExtStr[p++] = '\0';
+    ofn.lpstrDefExt = defExtStr;
+  }
+
+  if (GetOpenFileNameW(&ofn))
+  {
+    // With OFN_ALLOWMULTISELECT the buffer is either a single full path, or a
+    // directory followed by NUL-separated file names, terminated by a double NUL.
+    const wchar_t* p = fnBuf.data();
+    WDL_String first;
+    UTF16ToUTF8(first, p);
+    p += wcslen(p) + 1;
+
+    if (*p == L'\0')
+    {
+      // Single selection: 'first' is already the complete file path.
+      char drive[_MAX_DRIVE];
+      char directoryOutCStr[_MAX_PATH];
+      if (_splitpath_s(first.Get(), drive, sizeof(drive), directoryOutCStr, sizeof(directoryOutCStr), NULL, 0, NULL, 0) == 0)
+      {
+        path.Set(drive);
+        path.Append(directoryOutCStr);
+      }
+      fileNames.push_back(first);
+    }
+    else
+    {
+      // Multiple selections: 'first' is the directory; the rest are file names.
+      WDL_String dir(first.Get());
+      path.Set(dir.Get());
+      while (*p)
+      {
+        WDL_String name8;
+        UTF16ToUTF8(name8, p);
+        WDL_String full(dir.Get());
+        full.Append("\\");
+        full.Append(name8.Get());
+        fileNames.push_back(full);
+        p += wcslen(p) + 1;
+      }
+    }
+  }
+
+  ReleaseMouseCapture();
+}
+
 void IGraphicsWin::PromptForDirectory(WDL_String& dir, IFileDialogCompletionHandlerFunc completionHandler)
 {
   BROWSEINFO bi;

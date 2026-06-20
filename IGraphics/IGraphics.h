@@ -870,6 +870,21 @@ public:
    * @param completionHandler an IFileDialogCompletionHandlerFunc that will be called when a file is selected or the dialog is cancelled */
   virtual void PromptForFile(WDL_String& fileName, WDL_String& path, EFileAction action = EFileAction::Open, const char* ext = "", IFileDialogCompletionHandlerFunc completionHandler = nullptr) = 0;
 
+  /** Create a platform file-open dialog that allows selecting MULTIPLE files at once. Blocks the main thread.
+   * The base implementation falls back to a single-file PromptForFile (so platforms without a native
+   * multi-select override still work, returning 0 or 1 paths); platforms override this for true multi-select.
+   * @param path WDL_String reference: set to a default directory on input; set to the chosen directory on success.
+   * @param fileNames Cleared then filled with the full path of each selected file (empty on cancel).
+   * @param ext A space separated CString list of file extensions to filter (e.g. ".wav .aif"). */
+  virtual void PromptForFiles(WDL_String& path, std::vector<WDL_String>& fileNames, const char* ext = "")
+  {
+    fileNames.clear();
+    WDL_String fileName;
+    PromptForFile(fileName, path, EFileAction::Open, ext);
+    if (fileName.GetLength())
+      fileNames.push_back(fileName);
+  }
+
   /** Create a platform file prompt dialog to choose a directory path for opening/saving a directory. NOTE: this method will block the main thread
    * @param dir Non const WDL_String reference specifying the directory path. Set this prior to calling the method for save dialogs, to provide a default path. For load dialogs, on successful selection of a directory this will get set to the full path.
    * @param completionHandler an IFileDialogCompletionHandlerFunc that will be called when a file is selected or the dialog is cancelled. Only the path argument will be populated. */
