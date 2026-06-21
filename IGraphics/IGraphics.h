@@ -1554,6 +1554,9 @@ public:
   /** Called by ICornerResizerControl as the corner is dragged to resize */
   void OnDragResize(float x, float y);
 
+  /** VoLum: apply a pending corner-resizer drag target, coalesced to the frame tick (see IsDirty). */
+  void FlushDragResize();
+
   /** Called by the platform class if the view changes to dark/light mode
    * @param appearance Light/Dark mode */
   void OnAppearanceChanged(EUIAppearance appearance);
@@ -1821,6 +1824,14 @@ private:
   bool mShowControlBounds = false;
   bool mShowAreaDrawn = false;
   bool mResizingInProcess = false;
+  // VoLum: coalesce live corner-resizer drags to one Resize per frame. A synchronous Resize on every
+  // WM_MOUSEMOVE resized the native window and ran a full GL redraw faster than vblank, causing drag
+  // stutter and a transient dark gap between the resized native frame and the lagging GL redraw. We
+  // record the latest drag target here and flush it once per frame from IsDirty().
+  bool mDragResizePending = false;
+  int mDragResizeW = 0;
+  int mDragResizeH = 0;
+  float mDragResizeScale = 1.f;
   bool mLayoutOnResize = false;
   bool mEnableMultiTouch = false;
   EUIResizerMode mGUISizeMode = EUIResizerMode::Scale;

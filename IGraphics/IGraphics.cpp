@@ -805,6 +805,11 @@ void IGraphics::PathRadialLine(float cx, float cy, float angle, float rMin, floa
 
 bool IGraphics::IsDirty(IRECTList& rects)
 {
+  // VoLum: apply any corner-resizer drag coalesced from this frame's mouse moves exactly once, pacing
+  // the native window resize + GL redraw to the display tick (see OnDragResize). Resize() marks all
+  // controls dirty, so the resized frame is painted in this same pass.
+  FlushDragResize();
+
   if (mDisplayTickFunc)
     mDisplayTickFunc();
 
@@ -1452,17 +1457,38 @@ void IGraphics::OnGUIIdle()
 
 void IGraphics::OnDragResize(float x, float y)
 {
+  // VoLum: do not Resize synchronously on every mouse-move. Record the latest target and let the next
+  // frame tick (IsDirty -> FlushDragResize) apply a single Resize, pacing the window resize + redraw to
+  // the display rate. This removes the per-move resize/redraw storm that caused drag stutter and the
+  // transient dark "detached" gap on fast corner drags. The target depends only on the mouse-down
+  // anchor and the current cursor position (the x*GetDrawScale() term cancels the live draw scale), so
+  // deferring the apply yields the same final size as the old per-move path.
   if(mGUISizeMode == EUIResizerMode::Scale)
   {
     float scaleX = (x * GetDrawScale()) / mMouseDownX;
     float scaleY = (y * GetDrawScale()) / mMouseDownY;
 
-    Resize(Width(), Height(), std::min(scaleX, scaleY));
+    mDragResizeW = Width();
+    mDragResizeH = Height();
+    mDragResizeScale = std::min(scaleX, scaleY);
   }
   else
   {
-    Resize(static_cast<int>(x), static_cast<int>(y), GetDrawScale());
+    mDragResizeW = static_cast<int>(x);
+    mDragResizeH = static_cast<int>(y);
+    mDragResizeScale = GetDrawScale();
   }
+
+  mDragResizePending = true;
+}
+
+void IGraphics::FlushDragResize()
+{
+  if (!mDragResizePending)
+    return;
+
+  mDragResizePending = false;
+  Resize(mDragResizeW, mDragResizeH, mDragResizeScale);
 }
 
 void IGraphics::OnAppearanceChanged(EUIAppearance appearance)
@@ -1917,8 +1943,13 @@ void IGraphics::CreatePopupMenu(IControl& control, IPopupMenu& menu, const IRECT
 
 void IGraphics::EndDragResize()
 {
+  // VoLum: apply the final pending drag target before snapping layers to the new scale. Otherwise the
+  // last mouse-move delta (still queued for the next frame) would be dropped and the UI could settle a
+  // hair off the window edge, leaving a thin residual gap.
+  FlushDragResize();
+
   mResizingInProcess = false;
-  
+
   if (GetResizerMode() == EUIResizerMode::Scale)
   {
     // If scaling up we may want to load in high DPI bitmaps if scale > 1.
