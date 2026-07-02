@@ -52,6 +52,7 @@ public:
 
   bool RevealPathInExplorerOrFinder(WDL_String& path, bool select) override;
   void PromptForFile(WDL_String& fileName, WDL_String& path, EFileAction action, const char* ext, IFileDialogCompletionHandlerFunc completionHandler) override;
+  void PromptForFiles(WDL_String& path, std::vector<WDL_String>& fileNames, const char* ext) override;
   void PromptForDirectory(WDL_String& dir, IFileDialogCompletionHandlerFunc completionHandler) override;
   bool PromptForColor(IColor& color, const char* str, IColorPickerHandlerFunc func) override;
     

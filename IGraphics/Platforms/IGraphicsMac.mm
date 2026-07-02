@@ -490,6 +490,58 @@ void IGraphicsMac::PromptForFile(WDL_String& fileName, WDL_String& path, EFileAc
   }
 }
 
+void IGraphicsMac::PromptForFiles(WDL_String& path, std::vector<WDL_String>& fileNames, const char* ext)
+{
+  fileNames.clear();
+
+  if (!WindowIsOpen())
+    return;
+
+  NSString* pDefaultPath = nil;
+  if (path.GetLength())
+    pDefaultPath = [NSString stringWithCString:path.Get() encoding:NSUTF8StringEncoding];
+  else
+    pDefaultPath = @"";
+
+  NSArray* pFileTypes = nil;
+  if (CStringHasContents(ext))
+    pFileTypes = [[NSString stringWithUTF8String:ext] componentsSeparatedByString: @" "];
+
+  NSOpenPanel* pPanel = [NSOpenPanel openPanel];
+  [pPanel setAllowedFileTypes: pFileTypes];
+  [pPanel setDirectoryURL: [NSURL fileURLWithPath: pDefaultPath]];
+  [pPanel setCanChooseFiles:YES];
+  [pPanel setCanChooseDirectories:NO];
+  [pPanel setResolvesAliases:YES];
+  [pPanel setAllowsMultipleSelection:YES];
+  [pPanel setFloatingPanel: YES];
+
+  NSModalResponse response = [pPanel runModal];
+
+  if (response == NSOKButton)
+  {
+    for (NSURL* pURL in [pPanel URLs])
+    {
+      NSString* pFullPath = [pURL path];
+      if (pFullPath)
+        fileNames.push_back(WDL_String([pFullPath UTF8String]));
+    }
+
+    // Report the containing directory of the first selection (mirrors the
+    // single-file PromptForFile path-out contract used by callers).
+    if (!fileNames.empty())
+    {
+      NSString* pFirst = [[[pPanel URLs] objectAtIndex:0] path];
+      NSString* pDir = [pFirst stringByDeletingLastPathComponent];
+      if (pDir)
+      {
+        path.Set([pDir UTF8String]);
+        path.Append("/");
+      }
+    }
+  }
+}
+
 void IGraphicsMac::PromptForDirectory(WDL_String& dir, IFileDialogCompletionHandlerFunc completionHandler)
 {
   NSString* defaultPath;
