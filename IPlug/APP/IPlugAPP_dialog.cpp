@@ -153,27 +153,50 @@ void IPlugAPPHost::PopulateDriverSpecificControls(HWND hwndDlg)
   }
 
 #ifdef OS_WIN
-  if(driverType == kDeviceASIO)
-    SendDlgItemMessage(hwndDlg,IDC_COMBO_AUDIO_IN_DEV,CB_SETCURSEL, outdevidx, 0);
-  else
+  // VoLum: under ASIO the runtime opens one driver for both directions (see
+  // TryToChangeAudio), so the input side of this dialog has to describe that same
+  // *device* - not the same list position. mAudioInputDevs and mAudioOutputDevs are
+  // filtered independently and need not agree on order or length, so selecting
+  // outdevidx in the input combo could name a third device, or nothing at all when
+  // the input list is shorter. Resolve by device id instead.
+  if (driverType == kDeviceASIO && mAudioOutputDevs.size())
+  {
+    for (int i = 0; i < mAudioInputDevs.size(); i++)
+    {
+      if (mAudioInputDevs[i] == mAudioOutputDevs[outdevidx])
+      {
+        indevidx = i;
+        break;
+      }
+    }
+  }
 #endif
-    SendDlgItemMessage(hwndDlg,IDC_COMBO_AUDIO_IN_DEV,CB_SETCURSEL, indevidx, 0);
 
+  SendDlgItemMessage(hwndDlg,IDC_COMBO_AUDIO_IN_DEV,CB_SETCURSEL, indevidx, 0);
   SendDlgItemMessage(hwndDlg,IDC_COMBO_AUDIO_OUT_DEV,CB_SETCURSEL, outdevidx, 0);
 
   RtAudio::DeviceInfo inputDevInfo;
   RtAudio::DeviceInfo outputDevInfo;
 
-  if (mAudioInputDevs.size())
-  {
-    inputDevInfo = mDAC->getDeviceInfo(mAudioInputDevs[indevidx]);
-    PopulateAudioInputList(hwndDlg, &inputDevInfo);
-  }
-
-  if (mAudioOutputDevs.size())
+  // Output is probed first so the input side can reuse the result when both
+  // directions are the same device. That is not just an optimisation: calling
+  // getDeviceInfo twice on one ASIO device id is the pattern this fork already
+  // blames for driver-side heap corruption (see the comment in InitAudio), and
+  // after the fix above the ASIO case always names the same device twice.
+  if (mDAC && mAudioOutputDevs.size())
   {
     outputDevInfo = mDAC->getDeviceInfo(mAudioOutputDevs[outdevidx]);
     PopulateAudioOutputList(hwndDlg, &outputDevInfo);
+  }
+
+  if (mDAC && mAudioInputDevs.size())
+  {
+    if (mAudioOutputDevs.size() && mAudioInputDevs[indevidx] == mAudioOutputDevs[outdevidx])
+      inputDevInfo = outputDevInfo;
+    else
+      inputDevInfo = mDAC->getDeviceInfo(mAudioInputDevs[indevidx]);
+
+    PopulateAudioInputList(hwndDlg, &inputDevInfo);
   }
 
   PopulateSampleRateList(hwndDlg, &inputDevInfo, &outputDevInfo);

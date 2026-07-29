@@ -521,10 +521,37 @@ bool IPlugAPPHost::TryToChangeAudio()
       failedToFindDevice = true;
   }
 
+  bool correctedMismatchedAsioPair = false;
+
+#if defined OS_WIN
+  // VoLum: one ASIO driver serves both directions, so a saved pair that names two
+  // different drivers describes a stream that can never be opened as written. The
+  // input above is already resolved from mAudioOutDev, so the state is the only
+  // thing still claiming otherwise - and Preferences believes that claim when it
+  // probes input channels and sample rates. Recording the driver that is actually
+  // opened keeps settings.ini honest. The 1.2.1 report shipped exactly such a pair
+  // ("indev=ASIO4ALL v2", "outdev=FlexASIO"), which made a shutdown hang look like
+  // a two-driver duplex conflict.
+  if (mState.mAudioDriverType == kDeviceASIO && inputID != -1 && mAudioInputDevs.size())
+  {
+    const std::string openedInputName = GetAudioDeviceName(inputID);
+
+    if (strcmp(mState.mAudioInDev.Get(), openedInputName.c_str()) != 0)
+    {
+      mState.mAudioInDev.Set(openedInputName.c_str());
+      correctedMismatchedAsioPair = true;
+    }
+  }
+#endif
+
   if (resetToDefault)
   {
     DBGMSG("couldn't find previous audio device, reseting to default\n");
 
+    UpdateINI();
+  }
+  else if (correctedMismatchedAsioPair)
+  {
     UpdateINI();
   }
 
@@ -545,6 +572,33 @@ bool IPlugAPPHost::TryToChangeAudio()
 bool IPlugAPPHost::SelectMIDIDevice(ERoute direction, const char* pPortName)
 {
   int port = GetMIDIPortNumber(direction, pPortName);
+
+  // VoLum: opening a MIDI port throws RtMidiError when the device is listed but
+  // cannot be opened - most often another application holding it exclusively.
+  // Init() calls this before the window is created, and the only handler in the
+  // process is WinMain's, so an unguarded throw exited with no window and no
+  // message. Worse, the offending port name stayed in settings.ini, so every
+  // subsequent launch failed the same way until the other application released the
+  // device or the user hand-edited the file. Falling back to "off" and persisting
+  // that keeps the app launchable and self-repairing.
+  auto openOrTurnOff = [&](auto&& open) {
+    try
+    {
+      open();
+      return true;
+    }
+    catch (RtMidiError& e)
+    {
+      e.printMessage();
+      VOLUM_LOG("midi", "could not open the saved MIDI port; turning MIDI off for this direction");
+      if (direction == ERoute::kInput)
+        mState.mMidiInDev.Set(OFF_TEXT);
+      else
+        mState.mMidiOutDev.Set(OFF_TEXT);
+      UpdateINI();
+      return false;
+    }
+  };
 
   if(direction == ERoute::kInput)
   {
@@ -567,21 +621,18 @@ bool IPlugAPPHost::SelectMIDIDevice(ERoute direction, const char* pPortName)
   #if defined OS_WIN
       else
       {
-        mMidiIn->openPort(port-1);
-        return true;
+        return openOrTurnOff([&] { mMidiIn->openPort(port-1); });
       }
   #elif defined OS_MAC
       else if(port == 1)
       {
         std::string virtualMidiInputName = "To ";
         virtualMidiInputName += BUNDLE_NAME;
-        mMidiIn->openVirtualPort(virtualMidiInputName);
-        return true;
+        return openOrTurnOff([&] { mMidiIn->openVirtualPort(virtualMidiInputName); });
       }
       else
       {
-        mMidiIn->openPort(port-2);
-        return true;
+        return openOrTurnOff([&] { mMidiIn->openPort(port-2); });
       }
   #else
    #error NOT IMPLEMENTED
@@ -607,21 +658,18 @@ bool IPlugAPPHost::SelectMIDIDevice(ERoute direction, const char* pPortName)
 #if defined OS_WIN
       else
       {
-        mMidiOut->openPort(port-1);
-        return true;
+        return openOrTurnOff([&] { mMidiOut->openPort(port-1); });
       }
 #elif defined OS_MAC
       else if(port == 1)
       {
         std::string virtualMidiOutputName = "From ";
         virtualMidiOutputName += BUNDLE_NAME;
-        mMidiOut->openVirtualPort(virtualMidiOutputName);
-        return true;
+        return openOrTurnOff([&] { mMidiOut->openVirtualPort(virtualMidiOutputName); });
       }
       else
       {
-        mMidiOut->openPort(port-2);
-        return true;
+        return openOrTurnOff([&] { mMidiOut->openPort(port-2); });
       }
 #else
   #error NOT IMPLEMENTED
@@ -797,6 +845,18 @@ bool IPlugAPPHost::InitAudio(uint32_t inId, uint32_t outId, uint32_t sr, uint32_
     }
     
     mDAC->startStream();
+
+    // VoLum: openStream renegotiates mBufferSize when the driver refuses the
+    // request - RtApiAsio retries with the driver's preferred size - and the audio
+    // path correctly runs at the negotiated value. Nothing copied it back, so
+    // Preferences and settings.ini kept advertising the refused request: the dialog
+    // read 128 while the callback ran 64, and every reopen asked for 128 again.
+    //
+    // Only adopt sizes the dialog can represent exactly. The combo rounds anything
+    // else up (NormalizeAPPBufferSize), which would swap a truthful request for a
+    // size the driver never offered.
+    if (mBufferSize != iovs && NormalizeAPPBufferSize(mBufferSize) == mBufferSize)
+      mState.mBufferSize = mBufferSize;
 
     mActiveState = mState;
   }
