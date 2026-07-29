@@ -18,6 +18,11 @@
 
 #include "IPlugLogger.h"
 
+// VoLum: audio-teardown policy + shutdown watchdog, and the diagnostic log so a
+// stuck shutdown is visible in a user's volum.log.
+#include "VoLumAppShutdown.h"
+#include "VoLumDiagLog.h"
+
 using namespace iplug;
 
 #ifndef MAX_PATH_LEN
@@ -37,7 +42,14 @@ IPlugAPPHost::IPlugAPPHost()
 IPlugAPPHost::~IPlugAPPHost()
 {
   mExiting = true;
-  
+
+  // The window is already destroyed by the time this runs and VoLum persists its
+  // settings during the session, so nothing is lost by forcing the process out if
+  // driver teardown wedges. Bracketing the teardown with log lines makes a stuck
+  // shutdown diagnosable from volum.log: a "begin" with no "complete" is it.
+  VOLUM_LOG("shutdown", "audio teardown begin");
+  VoLumArmShutdownWatchdog();
+
   CloseAudio();
   
   if(mMidiIn)
@@ -45,6 +57,8 @@ IPlugAPPHost::~IPlugAPPHost()
 
   if(mMidiOut)
     mMidiOut->closePort();
+
+  VOLUM_LOG("shutdown", "audio teardown complete");
 }
 
 //static
@@ -620,33 +634,45 @@ bool IPlugAPPHost::SelectMIDIDevice(ERoute direction, const char* pPortName)
 
 void IPlugAPPHost::CloseAudio()
 {
-  if (mDAC && mDAC->isStreamOpen())
-  {
-    if (mDAC->isStreamRunning())
-    {
-      mAudioEnding = true;
-    
-      int waitCount = 0;
-      while (!mAudioDone && waitCount < 200)
-      {
-        Sleep(10);
-        ++waitCount;
-      }
+  if (!mDAC || !mDAC->isStreamOpen())
+    return;
 
-      if (!mAudioDone)
-        DBGMSG("VoLum: CloseAudio timed out waiting for callback fade; aborting stream\n");
-      
-      try
-      {
-        mDAC->abortStream();
-      }
-      catch (RtAudioError& e)
-      {
-        e.printMessage();
-      }
+  const bool wasRunning = mDAC->isStreamRunning();
+
+  if (wasRunning)
+    mAudioEnding = true;
+
+  const VoLumAudioTeardownPlan plan = VoLumRunAudioTeardown(
+    true, wasRunning, [this] { return mAudioDone; }, [](int ms) { Sleep(ms); });
+
+  if (plan.drainBeforeClose)
+  {
+    try
+    {
+      mDAC->abortStream();
     }
-    
+    catch (RtAudioError& e)
+    {
+      e.printMessage();
+    }
+  }
+  else if (wasRunning)
+  {
+    // The callback stopped acknowledging the fade, so nothing will ever signal
+    // the condition the driver's drain waits on. See VoLumAppShutdown.h.
+    DBGMSG("VoLum: audio callback did not fade in %i ms; skipping drain\n", kVoLumMaxFadeWaits * kVoLumFadeWaitMs);
+    VOLUM_LOG("audio", "callback did not fade before close; skipping driver drain");
+  }
+
+  // CloseAudio runs from ~IPlugAPPHost, so an escaping exception would take the
+  // process down instead of letting shutdown finish.
+  try
+  {
     mDAC->closeStream();
+  }
+  catch (RtAudioError& e)
+  {
+    e.printMessage();
   }
 }
 

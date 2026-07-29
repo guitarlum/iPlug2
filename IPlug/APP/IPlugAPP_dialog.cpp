@@ -473,7 +473,13 @@ WDL_DLGRET IPlugAPPHost::PreferencesDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wPar
         case IDC_BUTTON_OS_DEV_SETTINGS:
           if (HIWORD(wParam) == BN_CLICKED) {
             #ifdef OS_WIN
-            if( (_this->mState.mAudioDriverType == kDeviceASIO) && (_this->mDAC->isStreamRunning() == true)) // TODO: still not right
+            // VoLum: mDAC is legitimately null when the ASIO driver failed to
+            // instantiate (TryToChangeAudioDriverType leaves it null, and
+            // RestoreActiveAudioStateAfterFailure returns without recreating it),
+            // while PopulateDriverSpecificControls enables this button purely
+            // from the driver combo. Dereferencing it there crashed the app in
+            // exactly the situation the user opened Preferences to repair.
+            if( (_this->mState.mAudioDriverType == kDeviceASIO) && _this->mDAC && (_this->mDAC->isStreamRunning() == true)) // TODO: still not right
               ASIOControlPanel();
             #elif defined OS_MAC
             if(SWELL_GetOSXVersion() >= 0x1200) {
