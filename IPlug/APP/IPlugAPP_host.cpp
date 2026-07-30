@@ -54,12 +54,28 @@ IPlugAPPHost::~IPlugAPPHost()
   VoLumArmShutdownWatchdog();
 
   CloseAudio();
-  
-  if(mMidiIn)
-    mMidiIn->cancelCallback();
 
-  if(mMidiOut)
-    mMidiOut->closePort();
+  // Closed and released here rather than left to member destruction. Both are
+  // unique_ptrs declared below mDAC, so their backends - and any port still open -
+  // are torn down after this body returns, which is outside the watchdog. A wedged
+  // MIDI input could therefore still leave a windowless process behind, which is the
+  // exact failure the watchdog was added for. cancelCallback alone does not close.
+  try
+  {
+    if (mMidiIn)
+    {
+      mMidiIn->cancelCallback();
+      mMidiIn->closePort();
+    }
+    if (mMidiOut)
+      mMidiOut->closePort();
+  }
+  catch (...)
+  {
+    VOLUM_LOG("shutdown", "MIDI teardown raised; continuing");
+  }
+  mMidiIn = nullptr;
+  mMidiOut = nullptr;
 
   VoLumDisarmShutdownWatchdog();
   VOLUM_LOG("shutdown", "audio teardown complete");
