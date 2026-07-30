@@ -188,7 +188,13 @@ bool IPlugAPPHost::InitState()
 
     if(!result_code)
     {
-      mINIPath.Append("\\settings.ini");
+      // Forward slash, matching the path this branch just created and the OS_WIN
+      // branch above. A backslash here is not a separator on POSIX: it produced a
+      // file literally named "\settings.ini" inside the new directory, so the next
+      // launch - which finds the directory and looks for "settings.ini" - saw no
+      // settings file and wrote defaults. First run on a clean mac therefore lost
+      // its audio device, buffer, sample rate and MIDI choices, exactly once.
+      mINIPath.Append("settings.ini");
       UpdateINI(); // will write file if doesn't exist
     }
     else
