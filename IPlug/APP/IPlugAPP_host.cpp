@@ -47,6 +47,9 @@ IPlugAPPHost::~IPlugAPPHost()
   // settings during the session, so nothing is lost by forcing the process out if
   // driver teardown wedges. Bracketing the teardown with log lines makes a stuck
   // shutdown diagnosable from volum.log: a "begin" with no "complete" is it.
+  // Armed only around the driver and MIDI calls. mIPlug is declared before mDAC and
+  // so is destroyed after this body returns; leaving the timer running would put
+  // the model-loader join and the settings write under it, and neither is bounded.
   VOLUM_LOG("shutdown", "audio teardown begin");
   VoLumArmShutdownWatchdog();
 
@@ -58,6 +61,7 @@ IPlugAPPHost::~IPlugAPPHost()
   if(mMidiOut)
     mMidiOut->closePort();
 
+  VoLumDisarmShutdownWatchdog();
   VOLUM_LOG("shutdown", "audio teardown complete");
 }
 
@@ -521,37 +525,21 @@ bool IPlugAPPHost::TryToChangeAudio()
       failedToFindDevice = true;
   }
 
-  bool correctedMismatchedAsioPair = false;
-
-#if defined OS_WIN
-  // VoLum: one ASIO driver serves both directions, so a saved pair that names two
-  // different drivers describes a stream that can never be opened as written. The
-  // input above is already resolved from mAudioOutDev, so the state is the only
-  // thing still claiming otherwise - and Preferences believes that claim when it
-  // probes input channels and sample rates. Recording the driver that is actually
-  // opened keeps settings.ini honest. The 1.2.1 report shipped exactly such a pair
-  // ("indev=ASIO4ALL v2", "outdev=FlexASIO"), which made a shutdown hang look like
-  // a two-driver duplex conflict.
-  if (mState.mAudioDriverType == kDeviceASIO && inputID != -1 && mAudioInputDevs.size())
-  {
-    const std::string openedInputName = GetAudioDeviceName(inputID);
-
-    if (strcmp(mState.mAudioInDev.Get(), openedInputName.c_str()) != 0)
-    {
-      mState.mAudioInDev.Set(openedInputName.c_str());
-      correctedMismatchedAsioPair = true;
-    }
-  }
-#endif
+  // VoLum: one ASIO driver serves both directions, so a saved pair naming two
+  // different drivers describes a stream that can never be opened as written - the
+  // 1.2.1 report shipped exactly such a pair ("indev=ASIO4ALL v2",
+  // "outdev=FlexASIO"), which made a shutdown hang look like a duplex conflict.
+  // The input is resolved from mAudioOutDev above, and Preferences resolves its
+  // input selection from the output device's id rather than from mAudioInDev, so
+  // both the stream and the dialog are already honest about which driver opens.
+  // mAudioInDev is deliberately NOT rewritten to match: it also holds the
+  // DirectSound/CoreAudio input choice, and copying the ASIO driver name over it
+  // silently destroyed that choice on every switch back.
 
   if (resetToDefault)
   {
     DBGMSG("couldn't find previous audio device, reseting to default\n");
 
-    UpdateINI();
-  }
-  else if (correctedMismatchedAsioPair)
-  {
     UpdateINI();
   }
 
@@ -577,10 +565,14 @@ bool IPlugAPPHost::SelectMIDIDevice(ERoute direction, const char* pPortName)
   // cannot be opened - most often another application holding it exclusively.
   // Init() calls this before the window is created, and the only handler in the
   // process is WinMain's, so an unguarded throw exited with no window and no
-  // message. Worse, the offending port name stayed in settings.ini, so every
-  // subsequent launch failed the same way until the other application released the
-  // device or the user hand-edited the file. Falling back to "off" and persisting
-  // that keeps the app launchable and self-repairing.
+  // message. Falling back to "off" in memory keeps the app launchable.
+  //
+  // Deliberately NOT persisted: the usual cause is transient (a DAW still quitting,
+  // a vendor control panel, a second VoLum), and writing "off" to settings.ini on
+  // the first failure turned a five-second conflict into a permanent loss of the
+  // user's MIDI configuration, with nothing on screen to explain it. The file keeps
+  // naming the device, so the next launch tries again; Preferences reads mState, so
+  // the selector correctly shows "off" for this session.
   auto openOrTurnOff = [&](auto&& open) {
     try
     {
@@ -590,12 +582,11 @@ bool IPlugAPPHost::SelectMIDIDevice(ERoute direction, const char* pPortName)
     catch (RtMidiError& e)
     {
       e.printMessage();
-      VOLUM_LOG("midi", "could not open the saved MIDI port; turning MIDI off for this direction");
+      VOLUM_LOG("midi", "could not open the saved MIDI port; MIDI is off for this session only");
       if (direction == ERoute::kInput)
         mState.mMidiInDev.Set(OFF_TEXT);
       else
         mState.mMidiOutDev.Set(OFF_TEXT);
-      UpdateINI();
       return false;
     }
   };

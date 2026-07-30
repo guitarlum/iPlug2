@@ -36,6 +36,7 @@
 // session, so forcing the process out costs nothing and guarantees the reported
 // symptom cannot recur whichever driver call hangs.
 
+#include <atomic>
 #include <chrono>
 #include <cstdlib>
 #include <thread>
@@ -48,9 +49,19 @@ namespace iplug
 inline constexpr int kVoLumFadeWaitMs = 10;
 inline constexpr int kVoLumMaxFadeWaits = 200; // 2 s
 
-/** Grace period for the whole teardown once shutdown has begun. Audio teardown
- * is milliseconds of work; anything approaching this is a wedged driver. */
+/** Grace period for the AUDIO teardown, and nothing else. The fade wait above can
+ * legitimately consume 2 s of it before any driver call is made, so this has to
+ * exceed that plus an allowance for ASIOStop / ASIODisposeBuffers /
+ * removeCurrentDriver on a healthy driver. It must not be stretched to cover
+ * plugin teardown: that joins the model loader, which can be in the middle of a
+ * multi-second capture load, and writes the settings file - work with no bound
+ * that has no business being killed. Arm around CloseAudio(), disarm after. */
 inline constexpr int kVoLumShutdownWatchdogMs = 5000;
+
+/** Exit code used when the watchdog fires. Not 0: a wedged shutdown must not look
+ * like a clean one to the end-to-end scripts or an installer that waits on the
+ * process. */
+inline constexpr int kVoLumShutdownWatchdogExitCode = 3;
 
 struct VoLumAudioTeardownPlan
 {
@@ -101,20 +112,46 @@ VoLumAudioTeardownPlan VoLumRunAudioTeardown(bool streamOpen, bool streamRunning
   return plan;
 }
 
-/** Starts a detached thread that forces the process out if shutdown has not
- * completed within timeoutMs. A normal exit tears this thread down long before
- * it wakes, so it only ever fires on a stuck teardown.
+/** Set to false once the work the watchdog guards has finished, so the timer
+ * becomes a no-op instead of killing a process that is merely still tidying up. */
+inline std::atomic<bool>& VoLumShutdownWatchdogArmed()
+{
+  static std::atomic<bool> armed{false};
+  return armed;
+}
+
+/** Starts a detached thread that forces the process out if the guarded work has
+ * not finished within timeoutMs. A normal teardown disarms it long before it
+ * wakes, so it only ever fires on a wedged driver.
  *
- * Deliberately does no logging and touches no shared state: its one job is to
- * be the thing that cannot itself get stuck. Bracket the teardown with log
- * lines instead - an unmatched "begin" in volum.log is the diagnosis. */
+ * Deliberately does no logging and touches nothing but the flag: its one job is
+ * to be the thing that cannot itself get stuck. Bracket the teardown with log
+ * lines instead - an unmatched "begin" in volum.log is the diagnosis.
+ *
+ * Called from a destructor, which is implicitly noexcept: a thread that cannot be
+ * created must not turn resource exhaustion at quit into std::terminate. */
 inline void VoLumArmShutdownWatchdog(int timeoutMs = kVoLumShutdownWatchdogMs)
 {
-  std::thread watchdog([timeoutMs] {
-    std::this_thread::sleep_for(std::chrono::milliseconds(timeoutMs));
-    std::_Exit(0);
-  });
-  watchdog.detach();
+  VoLumShutdownWatchdogArmed().store(true);
+  try
+  {
+    std::thread watchdog([timeoutMs] {
+      std::this_thread::sleep_for(std::chrono::milliseconds(timeoutMs));
+      if (VoLumShutdownWatchdogArmed().load())
+        std::_Exit(kVoLumShutdownWatchdogExitCode);
+    });
+    watchdog.detach();
+  }
+  catch (...)
+  {
+    VoLumShutdownWatchdogArmed().store(false);
+  }
+}
+
+/** Disarm once the guarded work has returned. */
+inline void VoLumDisarmShutdownWatchdog()
+{
+  VoLumShutdownWatchdogArmed().store(false);
 }
 
 } // namespace iplug
