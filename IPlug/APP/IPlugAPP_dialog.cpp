@@ -631,7 +631,9 @@ WDL_DLGRET IPlugAPPHost::MainDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPA
       return 1;
     }
     case WM_TIMER:
-      if (wParam == kAudioStatusTimerID && gPreferencesHWND == NULL)
+      // pAppHost is null once WM_DESTROY has released the instance, and a timer
+      // message posted before KillTimer can still be waiting in the queue.
+      if (wParam == kAudioStatusTimerID && gPreferencesHWND == NULL && pAppHost)
         pAppHost->PollAudioStatus();
       return 0;
     case WM_DESTROY:

@@ -465,6 +465,8 @@ bool IPlugAPPHost::RestoreActiveAudioStateAfterFailure(const char* message)
     // the path a stored sample rate the device no longer supports takes, so the whole
     // failure was invisible: no audio, settings.ini quietly rewritten to defaults, and
     // no explanation. Hold it until the window exists (see PollAudioStatus).
+    VOLUM_LOG("audio", std::string("audio failure: ") + message);
+
     if (gHWND)
       MessageBox(gHWND, message, "Audio Error", MB_OK);
     else
@@ -1068,6 +1070,7 @@ bool IPlugAPPHost::InitAudio(uint32_t inId, uint32_t outId, uint32_t sr, uint32_
   catch (RtAudioError& e)
   {
     e.printMessage();
+    VOLUM_LOG("audio", std::string("stream open failed: ") + e.what());
     return false;
   }
 
