@@ -58,6 +58,18 @@ inline constexpr int kVoLumMaxFadeWaits = 200; // 2 s
  * that has no business being killed. Arm around CloseAudio(), disarm after. */
 inline constexpr int kVoLumShutdownWatchdogMs = 5000;
 
+/** Grace period for PLUGIN teardown, which runs after the audio teardown and does
+ * the work the budget above deliberately excludes: joining the model loader, which
+ * may be several seconds into a capture load, and writing the settings file.
+ *
+ * Unbounded was the wrong answer too. Whatever the plugin destructor waits on, a
+ * process that never finishes it is a windowless VoLum holding the audio device,
+ * which is the same symptom the audio watchdog exists to prevent - the next launch
+ * cannot start and the user has to find the process in Task Manager. So: long
+ * enough that no legitimate teardown is ever cut short, short enough that a wedge
+ * ends by itself. */
+inline constexpr int kVoLumPluginTeardownWatchdogMs = 20000;
+
 /** Exit code used when the watchdog fires. Not 0: a wedged shutdown must not look
  * like a clean one to the end-to-end scripts or an installer that waits on the
  * process. */

@@ -24,6 +24,14 @@ using namespace iplug;
 
 static constexpr const char* kVoLumManualURL = "https://github.com/guitarlum/VoLum/blob/main/docs/user-guide.en.md";
 
+// VoLum: timer id for the main window's audio-status poll. See PollAudioStatus.
+static constexpr UINT_PTR kAudioStatusTimerID = 1001;
+
+// VoLum: non-null while Preferences is open. The audio-status poll stands down for as
+// long as it is: reopening the stream underneath a dialog the user is editing would
+// fight them for the device, and the driver's pending rate keeps until the next tick.
+static HWND gPreferencesHWND = NULL;
+
 #if !defined NO_IGRAPHICS
 #include "IGraphics.h"
 using namespace igraphics;
@@ -335,10 +343,15 @@ WDL_DLGRET IPlugAPPHost::PreferencesDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wPar
   switch(uMsg)
   {
     case WM_INITDIALOG:
+      gPreferencesHWND = hwndDlg;
       _this->PopulatePreferencesDialog(hwndDlg);
       mTempState = mState;
       
       return TRUE;
+
+    case WM_DESTROY:
+      gPreferencesHWND = NULL;
+      return 0;
 
     case WM_COMMAND:
       switch (LOWORD(wParam))
@@ -347,12 +360,17 @@ WDL_DLGRET IPlugAPPHost::PreferencesDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wPar
           if(mActiveState != mState)
             _this->TryToChangeAudio();
 
+          gPreferencesHWND = NULL;
           EndDialog(hwndDlg, IDOK); // INI file will be changed see MainDialogProc
           break;
         case IDAPPLY:
           _this->TryToChangeAudio();
+          // VoLum: the driver has the last word on the sample rate, so show what it
+          // actually opened at rather than leaving the requested rate on screen.
+          _this->PopulateAudioDialogs(hwndDlg);
           break;
         case IDCANCEL:
+          gPreferencesHWND = NULL;
           EndDialog(hwndDlg, IDCANCEL);
 
           // if state has been changed reset to previous state, INI file won't be changed
@@ -603,9 +621,21 @@ WDL_DLGRET IPlugAPPHost::MainDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPA
       ClientResize(hwndDlg, width, height);
 
       ShowWindow(hwndDlg, SW_SHOW);
+
+      // VoLum: drives IPlugAPPHost::PollAudioStatus - reports a startup audio failure
+      // that had no window to appear in, and reopens the stream when the driver changes
+      // the sample rate from its own control panel. Half a second is well under the
+      // point where silence reads as a hang, and the poll does nothing at all in the
+      // usual case.
+      SetTimer(hwndDlg, kAudioStatusTimerID, 500, NULL);
       return 1;
     }
+    case WM_TIMER:
+      if (wParam == kAudioStatusTimerID && gPreferencesHWND == NULL)
+        pAppHost->PollAudioStatus();
+      return 0;
     case WM_DESTROY:
+      KillTimer(hwndDlg, kAudioStatusTimerID);
       pAppHost->CloseWindow();
       gHWND = NULL;
       IPlugAPPHost::sInstance = nullptr;
@@ -668,6 +698,7 @@ WDL_DLGRET IPlugAPPHost::MainDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPA
         case ID_PREFERENCES:
         {
           INT_PTR ret = DialogBox(gHINSTANCE, MAKEINTRESOURCE(IDD_DIALOG_PREF), hwndDlg, IPlugAPPHost::PreferencesDlgProc);
+          gPreferencesHWND = NULL;
 
           if(ret == IDOK)
             pAppHost->UpdateINI();

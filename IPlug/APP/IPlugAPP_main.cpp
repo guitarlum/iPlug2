@@ -37,15 +37,58 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpszCmdPa
   {
 #ifndef APP_ALLOW_MULTIPLE_INSTANCES
     HANDLE hMutex = OpenMutex(MUTEX_ALL_ACCESS, 0, BUNDLE_NAME); // BUNDLE_NAME used because it won't have spaces in it
-    
-    if (!hMutex)
-      hMutex = CreateMutex(0, 0, BUNDLE_NAME);
-    else
+
+    if (hMutex)
     {
       HWND hWnd = FindWindow(0, BUNDLE_NAME);
-      SetForegroundWindow(hWnd);
-      return 0;
+
+      // VoLum: a previous instance holds the mutex but has no window - it is either
+      // still shutting down or it is stuck. Upstream called SetForegroundWindow(NULL)
+      // and returned 0, so the launch did nothing at all and said nothing about it.
+      // That is exactly what a user sees after an audio driver changes its sample rate
+      // underneath a running VoLum: "wenn ich VoLum dann schliesse und wieder oeffne,
+      // startet es nicht", with no clue that a process must be ended first.
+      //
+      // Wait a little first, since an orderly shutdown destroys the window before the
+      // process exits and a double-click landing in that window is easy.
+      const int kZombieWaitMs = 4000;
+      const int kZombieStepMs = 100;
+
+      for (int waited = 0; !hWnd && waited < kZombieWaitMs; waited += kZombieStepMs)
+      {
+        CloseHandle(hMutex);
+        Sleep(kZombieStepMs);
+
+        hMutex = OpenMutex(MUTEX_ALL_ACCESS, 0, BUNDLE_NAME);
+        if (!hMutex)
+          break; // the previous instance finished quitting; this one may start
+
+        hWnd = FindWindow(0, BUNDLE_NAME);
+      }
+
+      if (hWnd)
+      {
+        if (IsIconic(hWnd))
+          ShowWindow(hWnd, SW_RESTORE);
+
+        SetForegroundWindow(hWnd);
+        CloseHandle(hMutex);
+        return 0;
+      }
+
+      if (hMutex)
+      {
+        CloseHandle(hMutex);
+        MessageBox(NULL,
+                   BUNDLE_NAME " is already running, but its window has closed.\n\n"
+                   "A previous session did not shut down completely. End the " BUNDLE_NAME
+                   " process in Task Manager, then start " BUNDLE_NAME " again.",
+                   BUNDLE_NAME, MB_OK | MB_ICONWARNING);
+        return 0;
+      }
     }
+
+    hMutex = CreateMutex(0, 0, BUNDLE_NAME);
 #endif
     gHINSTANCE = hInstance;
     

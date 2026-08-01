@@ -3050,6 +3050,21 @@ bool RtApiAsio :: probeDeviceOpen( unsigned int device, StreamMode mode, unsigne
     }
   }
 
+  // VoLum: read the rate back rather than assuming the request took.
+  //
+  // A driver whose clock is externally set, or one being driven from its own control
+  // panel, can accept ASIOSetSampleRate and stay exactly where it was. Everything
+  // downstream then believed the requested rate: getStreamSampleRate() echoed it,
+  // Preferences displayed it, settings.ini stored it, and the plugin was configured
+  // for it while the hardware ran at something else. From the outside that looked like
+  // the application ignoring the interface - "ich kann die Sampling-Rate meines
+  // Interfaces nicht umstellen, obwohl die Anzeige das behauptet".
+  {
+    ASIOSampleRate actualRate = (ASIOSampleRate) sampleRate;
+    if ( ASIOGetSampleRate( &actualRate ) == ASE_OK && actualRate > 0.0 )
+      sampleRate = (unsigned int) ( actualRate + 0.5 );
+  }
+
   // Determine the driver data type.
   ASIOChannelInfo channelInfo;
   channelInfo.channel = 0;
@@ -3640,6 +3655,16 @@ static void sampleRateChanged( ASIOSampleRate sRate )
   // audio device.
 
   RtApi *object = (RtApi *) asioCallbackInfo->object;
+
+  // VoLum: record the new rate before stopping, so the host can reopen at it.
+  //
+  // Stopping the stream and printing to stderr was the whole of the response here.
+  // For a user who changes the rate in their interface's control panel while the
+  // application is open, that is indistinguishable from the application breaking: the
+  // audio stops and nothing ever starts it again. The host polls for this and reopens.
+  if ( sRate > 0.0 )
+    object->notePendingExternalSampleRate( (unsigned int) ( sRate + 0.5 ) );
+
   try {
     object->stopStream();
   }
@@ -3675,7 +3700,21 @@ static long asioMessages( long selector, long value, void* /*message*/, double* 
     // done by completely destruct is. I.e. ASIOStop(),
     // ASIODisposeBuffers(), Destruction Afterwards you initialize the
     // driver again.
+    //
+    // VoLum: "defer the task" used to mean "print a line and forget it", which left
+    // the host running a stream the driver had already abandoned - silence, and a
+    // close that hangs waiting on a dead device. Note it so the host can do the
+    // close-and-reopen the comment above describes. Changing the sample rate in an
+    // interface's own control panel arrives here rather than at sampleRateChanged on
+    // several drivers, so read the rate too; the host reopens at whatever it reports.
     std::cerr << "\nRtApiAsio: driver reset requested!!!" << std::endl;
+    if ( asioCallbackInfo && asioCallbackInfo->object ) {
+      RtApi *object = (RtApi *) asioCallbackInfo->object;
+      ASIOSampleRate resetRate;
+      if ( ASIOGetSampleRate( &resetRate ) == ASE_OK && resetRate > 0.0 )
+        object->notePendingExternalSampleRate( (unsigned int) ( resetRate + 0.5 ) );
+      object->notePendingDeviceReset();
+    }
     ret = 1L;
     break;
   case kAsioResyncRequest:

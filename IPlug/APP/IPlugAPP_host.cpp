@@ -15,6 +15,7 @@
 #endif
 
 #include <algorithm>
+#include <cmath>
 
 #include "IPlugLogger.h"
 
@@ -79,6 +80,17 @@ IPlugAPPHost::~IPlugAPPHost()
 
   VoLumDisarmShutdownWatchdog();
   VOLUM_LOG("shutdown", "audio teardown complete");
+
+  // mIPlug is declared before mDAC and so would be destroyed after this body returns,
+  // with nothing watching it. Destroy it here instead, under a budget of its own: the
+  // work it does - joining the model loader, writing the settings file - has no place
+  // under the audio watchdog's five seconds, but leaving it unbounded leaves the same
+  // windowless process holding the device that the audio watchdog exists to prevent.
+  VOLUM_LOG("shutdown", "plugin teardown begin");
+  VoLumArmShutdownWatchdog(kVoLumPluginTeardownWatchdogMs);
+  mIPlug = nullptr;
+  VoLumDisarmShutdownWatchdog();
+  VOLUM_LOG("shutdown", "plugin teardown complete");
 }
 
 //static
@@ -126,9 +138,22 @@ void IPlugAPPHost::CloseWindow()
 bool IPlugAPPHost::InitState()
 {
 #if defined OS_WIN
-  TCHAR strPath[MAX_PATH_LEN];
-  SHGetFolderPathA( NULL, CSIDL_LOCAL_APPDATA, NULL, 0, strPath );
-  mINIPath.SetFormatted(MAX_PATH_LEN, "%s\\%s\\", strPath, BUNDLE_NAME);
+  // VoLum: prefer the LOCALAPPDATA environment variable, falling back to the shell
+  // folder. Every other VoLum state file resolves through getenv (see VoLumPaths.h),
+  // and SHGetFolderPath ignores the environment, so settings.ini was the one file that
+  // did not follow a redirected LOCALAPPDATA. That made the audio configuration
+  // untestable from the sandboxed end-to-end scenarios: they seeded a settings.ini the
+  // app never read, and any assertion about what the app wrote back was really an
+  // assertion about the developer's own file.
+  const char* localAppData = std::getenv("LOCALAPPDATA");
+  if (localAppData && *localAppData)
+    mINIPath.SetFormatted(MAX_PATH_LEN, "%s\\%s\\", localAppData, BUNDLE_NAME);
+  else
+  {
+    TCHAR strPath[MAX_PATH_LEN];
+    SHGetFolderPathA( NULL, CSIDL_LOCAL_APPDATA, NULL, 0, strPath );
+    mINIPath.SetFormatted(MAX_PATH_LEN, "%s\\%s\\", strPath, BUNDLE_NAME);
+  }
 #elif defined OS_MAC
   mINIPath.SetFormatted(MAX_PATH_LEN, "%s/Library/Application Support/%s/", getenv("HOME"), BUNDLE_NAME);
 #else
@@ -434,7 +459,17 @@ bool IPlugAPPHost::MIDISettingsInStateAreEqual(AppState& os, AppState& ns)
 bool IPlugAPPHost::RestoreActiveAudioStateAfterFailure(const char* message)
 {
   if (message && message[0])
-    MessageBox(gHWND, message, "Audio Error", MB_OK);
+  {
+    // VoLum: at startup there is no window yet, and MessageBox(NULL, ...) puts the box
+    // somewhere the user is not looking or, on some systems, nowhere at all. That is
+    // the path a stored sample rate the device no longer supports takes, so the whole
+    // failure was invisible: no audio, settings.ini quietly rewritten to defaults, and
+    // no explanation. Hold it until the window exists (see PollAudioStatus).
+    if (gHWND)
+      MessageBox(gHWND, message, "Audio Error", MB_OK);
+    else
+      mDeferredAudioError.Set(message);
+  }
 
   if (mState == mActiveState)
     return false;
@@ -577,6 +612,107 @@ bool IPlugAPPHost::TryToChangeAudio()
   }
 
   return false;
+}
+
+// VoLum: see the declaration in IPlugAPP_host.h.
+uint32_t IPlugAPPHost::NearestSupportedSampleRate(uint32_t desiredSR, int inputID, int outputID)
+{
+  if (!mDAC || inputID < 0 || outputID < 0)
+    return 0;
+
+  RtAudio::DeviceInfo inInfo, outInfo;
+  try
+  {
+    inInfo = mDAC->getDeviceInfo(static_cast<unsigned int>(inputID));
+    outInfo = mDAC->getDeviceInfo(static_cast<unsigned int>(outputID));
+  }
+  catch (RtAudioError& e)
+  {
+    e.printMessage();
+    return 0;
+  }
+
+  if (!inInfo.probed || !outInfo.probed || inInfo.sampleRates.empty() || outInfo.sampleRates.empty())
+    return 0;
+
+  // The dialog offers the intersection of the two device lists, so match that here:
+  // picking a rate only one side supports would move the failure rather than fix it.
+  std::vector<unsigned int> shared;
+  for (unsigned int sr : inInfo.sampleRates)
+    if (std::find(outInfo.sampleRates.begin(), outInfo.sampleRates.end(), sr) != outInfo.sampleRates.end())
+      shared.push_back(sr);
+
+  if (shared.empty())
+    return 0;
+
+  for (unsigned int sr : shared)
+    if (sr == desiredSR)
+      return desiredSR;
+
+  // Nearest in ratio, not in Hz, so 44100 prefers 48000 over 22050.
+  unsigned int best = shared.front();
+  double bestDistance = 1e30;
+  for (unsigned int sr : shared)
+  {
+    const double distance = std::abs(std::log(static_cast<double>(sr) / std::max(1.0, static_cast<double>(desiredSR))));
+    if (distance < bestDistance)
+    {
+      bestDistance = distance;
+      best = sr;
+    }
+  }
+  return best;
+}
+
+// VoLum: see the declaration in IPlugAPP_host.h.
+void IPlugAPPHost::PollAudioStatus()
+{
+  if (mDeferredAudioError.GetLength())
+  {
+    WDL_String message;
+    message.Set(mDeferredAudioError.Get());
+    mDeferredAudioError.Set("");
+    MessageBox(gHWND, message.Get(), "Audio Error", MB_OK);
+  }
+
+  if (!mDAC)
+    return;
+
+  const bool driverWasReset = mDAC->takePendingDeviceReset();
+  const uint32_t driverRate = mDAC->takePendingExternalSampleRate();
+  const bool rateMoved = driverRate != 0 && driverRate != mState.mAudioSR;
+
+  if (!driverWasReset && !rateMoved)
+    return;
+
+  if (!mFollowDriverChanges)
+    return;
+
+  // A driver that asks to be reopened immediately after every open would otherwise
+  // have VoLum reopening on every tick. Follow the first few and then stop, leaving
+  // the user with working audio at whatever rate the last open produced.
+  const auto now = std::chrono::steady_clock::now();
+  if (now - mLastAutoReopen > std::chrono::seconds(10))
+    mAutoReopenCount = 0;
+  mLastAutoReopen = now;
+
+  if (++mAutoReopenCount > 4)
+  {
+    mFollowDriverChanges = false;
+    VOLUM_LOG("audio", "the driver keeps asking to be reopened; no longer following it this session");
+    return;
+  }
+
+  // The driver moved, so VoLum moves with it. Reopening is the only option that ends
+  // with audio: RtAudio has already stopped the stream, and setting the rate back would
+  // be arguing with the control panel the user just used.
+  DBGMSG("audio driver reset (rate %u), reopening\n", driverRate);
+
+  if (rateMoved)
+    mState.mAudioSR = driverRate;
+
+  if (TryToChangeAudio())
+    UpdateINI();
 }
 
 bool IPlugAPPHost::SelectMIDIDevice(ERoute direction, const char* pPortName)
@@ -741,6 +877,9 @@ bool IPlugAPPHost::InitAudio(uint32_t inId, uint32_t outId, uint32_t sr, uint32_
 {
   CloseAudio();
 
+  // What the caller asked for, kept so the corrected value can be written back below.
+  const uint32_t requestedSR = sr;
+
   // VoLum: WDL_PtrList does not shrink on its own and CloseAudio() does not
   // clear these. Without this, repeated InitAudio calls (e.g. switching
   // DirectSound -> ASIO and picking higher device channels) accumulate stale
@@ -832,6 +971,21 @@ bool IPlugAPPHost::InitAudio(uint32_t inId, uint32_t outId, uint32_t sr, uint32_
   options.flags = RTAUDIO_NONINTERLEAVED;
   // options.streamName = BUNDLE_NAME; // JACK stream name, not used on other streams
 
+  // VoLum: a rate the devices do not offer cannot open, and the failure that follows
+  // is reported through a MessageBox that has nowhere to go during startup. This is
+  // reachable from an ordinary settings.ini - the file records whatever rate was in use
+  // when the app last closed, and the next session may be on a different interface.
+  // Same shape as the buffer size, which NormalizeAPPBufferSize already clamps on load.
+  if (const uint32_t supported = NearestSupportedSampleRate(sr, (int) inId, (int) outId))
+  {
+    if (supported != sr)
+    {
+      DBGMSG("device does not offer %i Hz, using %i Hz\n", sr, supported);
+      sr = supported;
+      mState.mAudioSR = supported;
+    }
+  }
+
   mSamplesElapsed = 0;
   mSampleRate = (double) sr;
   mVecWait = 0;
@@ -846,7 +1000,27 @@ bool IPlugAPPHost::InitAudio(uint32_t inId, uint32_t outId, uint32_t sr, uint32_
   try
   {
     mDAC->openStream(&oParams, iParams.nChannels > 0 ? &iParams : nullptr, RTAUDIO_FLOAT64, sr, &mBufferSize, &AudioCallback, this, &options /*, &ErrorCallback */);
-    
+
+    // VoLum: adopt the rate the driver actually took, the way the buffer size below is
+    // adopted. An ASIO driver can accept a rate request and stay where it was - most
+    // often because its clock is set from its own control panel or an external source -
+    // and everything downstream then believed the request: Preferences showed it,
+    // settings.ini stored it, and the plugin was configured for it while the hardware
+    // ran at something else. From outside that reads as VoLum ignoring the interface.
+    //
+    // Before startStream, so the plugin is reconfigured while no callback is running.
+    {
+      const unsigned int actualSR = mDAC->getStreamSampleRate();
+      if (actualSR > 0 && static_cast<double>(actualSR) != mSampleRate)
+      {
+        DBGMSG("driver opened at %u Hz, not the requested %i Hz\n", actualSR, sr);
+        mSampleRate = static_cast<double>(actualSR);
+        mState.mAudioSR = actualSR;
+        mIPlug->SetSampleRate(mSampleRate);
+        mIPlug->OnReset();
+      }
+    }
+
     for (int i = 0; i < iParams.nChannels; i++)
     {
       mInputBufPtrs.Add(nullptr); //will be set in callback
@@ -858,6 +1032,12 @@ bool IPlugAPPHost::InitAudio(uint32_t inId, uint32_t outId, uint32_t sr, uint32_
     }
     
     mDAC->startStream();
+
+    // The one line that settles "the display says 48 kHz but my interface is at 44.1":
+    // this is the rate and buffer the driver actually opened, not what was requested.
+    VOLUM_LOG("audio", "stream open: " + std::to_string(static_cast<int>(mSampleRate)) + " Hz, buffer "
+                         + std::to_string(static_cast<int>(mBufferSize)) + ", requested "
+                         + std::to_string(static_cast<int>(requestedSR)) + " Hz");
 
     // VoLum: openStream renegotiates mBufferSize when the driver refuses the
     // request - RtApiAsio retries with the driver's preferred size - and the audio
@@ -871,7 +1051,19 @@ bool IPlugAPPHost::InitAudio(uint32_t inId, uint32_t outId, uint32_t sr, uint32_
     if (mBufferSize != iovs && NormalizeAPPBufferSize(mBufferSize) == mBufferSize)
       mState.mBufferSize = mBufferSize;
 
+    // VoLum: opening the stream can make the driver report a rate change or ask for a
+    // reset - we just told it to change rate. Consume those so PollAudioStatus does not
+    // read our own open as the user having touched the control panel.
+    mDAC->takePendingExternalSampleRate();
+    mDAC->takePendingDeviceReset();
+
     mActiveState = mState;
+
+    // Persist a rate the device corrected, either before the open or during it.
+    // Otherwise settings.ini keeps naming a rate that cannot be opened and every
+    // launch repeats the correction - and, at startup, silently.
+    if (mState.mAudioSR != requestedSR)
+      UpdateINI();
   }
   catch (RtAudioError& e)
   {

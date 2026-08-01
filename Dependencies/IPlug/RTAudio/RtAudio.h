@@ -62,6 +62,7 @@
   #endif
 #endif
 
+#include <atomic>
 #include <string>
 #include <vector>
 #include <stdexcept>
@@ -606,6 +607,29 @@ class RTAUDIO_DLL_PUBLIC RtAudio
  */
   unsigned int getStreamSampleRate( void );
 
+  //! VoLum: the rate a driver switched itself to, once, then zero again.
+  /*!
+    ASIO drivers can change the sample rate behind the application's back - the user
+    opens the interface's own control panel and picks a different rate. When that
+    happens the driver calls back into RtAudio, which stops the stream, and until this
+    was added nothing else was told: the host kept its old rate, never reopened, and
+    the user heard silence until the application was restarted.
+
+    Returns 0 if no such change is pending. The value is consumed by the read, so poll
+    it from the message loop and reopen the stream at whatever it reports.
+  */
+  unsigned int takePendingExternalSampleRate( void );
+
+  //! VoLum: true once when the driver asked to be reinitialised.
+  /*!
+    An ASIO driver sends kAsioResetRequest when it has torn itself down and needs the
+    host to close and reopen - changing the sample rate from the vendor's own control
+    panel is the common cause, and it does not always arrive as a sample-rate callback.
+    RtAudio used to only print a line to stderr, leaving the host with a stream that
+    could no longer produce audio.
+  */
+  bool takePendingDeviceReset( void );
+
   //! Specify whether warning messages should be printed to stderr.
   void showWarnings( bool value = true );
 
@@ -740,6 +764,12 @@ public:
   bool isStreamRunning( void ) const { return stream_.state == STREAM_RUNNING; }
   void showWarnings( bool value ) { showWarnings_ = value; }
 
+  // VoLum: see RtAudio::takePendingExternalSampleRate. Written from the driver's
+  // callback thread and read from the message loop, hence the atomic.
+  void notePendingExternalSampleRate( unsigned int rate ) { pendingExternalSampleRate_.store( rate ); }
+  unsigned int takePendingExternalSampleRate( void ) { return pendingExternalSampleRate_.exchange( 0 ); }
+  void notePendingDeviceReset( void ) { pendingDeviceReset_.store( true ); }
+  bool takePendingDeviceReset( void ) { return pendingDeviceReset_.exchange( false ); }
 
 protected:
 
@@ -816,6 +846,8 @@ protected:
   bool showWarnings_;
   RtApiStream stream_;
   bool firstErrorOccurred_;
+  std::atomic<unsigned int> pendingExternalSampleRate_{0}; // VoLum
+  std::atomic<bool> pendingDeviceReset_{false}; // VoLum
 
   /*!
     Protected, api-specific method that attempts to open a device
@@ -879,6 +911,8 @@ inline bool RtAudio :: isStreamOpen( void ) const { return rtapi_->isStreamOpen(
 inline bool RtAudio :: isStreamRunning( void ) const { return rtapi_->isStreamRunning(); }
 inline long RtAudio :: getStreamLatency( void ) { return rtapi_->getStreamLatency(); }
 inline unsigned int RtAudio :: getStreamSampleRate( void ) { return rtapi_->getStreamSampleRate(); }
+inline unsigned int RtAudio :: takePendingExternalSampleRate( void ) { return rtapi_->takePendingExternalSampleRate(); }
+inline bool RtAudio :: takePendingDeviceReset( void ) { return rtapi_->takePendingDeviceReset(); }
 inline double RtAudio :: getStreamTime( void ) { return rtapi_->getStreamTime(); }
 inline void RtAudio :: setStreamTime( double time ) { return rtapi_->setStreamTime( time ); }
 inline void RtAudio :: showWarnings( bool value ) { rtapi_->showWarnings( value ); }

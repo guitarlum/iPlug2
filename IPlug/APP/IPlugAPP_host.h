@@ -33,6 +33,7 @@
 #include <vector>
 #include <limits>
 #include <memory>
+#include <chrono>
 
 #include "wdltypes.h"
 #include "wdlstring.h"
@@ -220,6 +221,25 @@ public:
   bool TryToChangeAudioDriverType();
   bool TryToChangeAudio();
   bool SelectMIDIDevice(ERoute direction, const char* portName);
+
+  /** VoLum: polled from the main window's timer, once the window exists.
+   *
+   * Two jobs, both of which need a window and so cannot be done during Init():
+   *
+   *  - Report an audio failure that happened at startup. RestoreActiveAudioStateAfterFailure
+   *    posts its MessageBox to gHWND, which is still NULL that early, so a stored sample
+   *    rate the device no longer supports used to fail silently: the app came up with no
+   *    audio, overwrote settings.ini with defaults, and said nothing.
+   *  - Follow the driver when it changes the sample rate on its own, which happens when
+   *    the user picks a new rate in their interface's control panel. RtAudio stops the
+   *    stream in that case; without this the stream is never reopened and the app is
+   *    silent until it is restarted. */
+  void PollAudioStatus();
+
+  /** VoLum: clamp a stored sample rate to something the open devices actually offer.
+   * Returns 0 when the device list cannot be trusted, in which case the caller keeps
+   * what it had. */
+  uint32_t NearestSupportedSampleRate(uint32_t desiredSR, int inputID, int outputID);
   
   static int AudioCallback(void* pOutputBuffer, void* pInputBuffer, uint32_t nFrames, double streamTime, RtAudioStreamStatus status, void* pUserData);
   static void MIDICallback(double deltatime, std::vector<uint8_t>* pMsg, void* pUserData);
@@ -229,6 +249,23 @@ public:
   static WDL_DLGRET MainDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPARAM lParam);
 
   IPlugAPP* GetPlug() { return mIPlug.get(); }
+
+  /** VoLum: the active audio stream's I/O block size, in frames. */
+  uint32_t GetIOBufferSize() const { return mBufferSize; }
+
+  /** VoLum: the device-reported input+output latency of the active stream, in frames,
+   * or 0 when the backend does not report one. ASIO drivers report a figure that
+   * already includes their own buffering; DirectSound/WASAPI often report nothing.
+   * Used by the standalone Settings page to show a real round trip instead of only
+   * the plugin's algorithmic delay. */
+  long GetStreamLatencyFrames() const
+  {
+    if (!mDAC || !mDAC->isStreamOpen())
+      return 0;
+    const long l = mDAC->getStreamLatency();
+    return l > 0 ? l : 0;
+  }
+
 private:
   std::unique_ptr<IPlugAPP> mIPlug = nullptr;
   std::unique_ptr<RtAudio> mDAC = nullptr;
@@ -273,6 +310,15 @@ private:
   int32_t mDefaultOutputDev = -1;
     
   WDL_String mINIPath;
+
+  /** VoLum: an audio failure that happened before there was a window to report it in.
+   * Shown once by PollAudioStatus and then cleared. */
+  WDL_String mDeferredAudioError;
+
+  /** VoLum: brake on the driver-follow logic in PollAudioStatus. */
+  bool mFollowDriverChanges = true;
+  int mAutoReopenCount = 0;
+  std::chrono::steady_clock::time_point mLastAutoReopen = std::chrono::steady_clock::now();
   
   std::vector<uint32_t> mAudioInputDevs;
   std::vector<uint32_t> mAudioOutputDevs;
