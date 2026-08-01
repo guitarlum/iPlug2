@@ -1041,6 +1041,10 @@ void IGraphicsWin::GetMouseLocation(float& x, float&y) const
 }
 
 #ifdef IGRAPHICS_GL
+// VoLum: exit code used when the machine has no usable OpenGL. Distinct from a crash
+// so scripts and installers can tell the two apart. See CreateGLContext.
+static constexpr UINT kGLUnavailableExitCode = 4;
+
 void IGraphicsWin::CreateGLContext()
 {
   PIXELFORMATDESCRIPTOR pfd =
@@ -1094,6 +1098,37 @@ void IGraphicsWin::CreateGLContext()
   //TODO: return false if GL init fails?
   if (!gladLoadGL())
     DBGMSG("Error initializing glad");
+
+  // VoLum: stop here if the driver is older than the renderer needs.
+  //
+  // Windows falls back to a generic OpenGL 1.1 implementation whenever no real one is
+  // available - a Remote Desktop session, a virtual machine, safe mode, a graphics
+  // driver that failed to load. wglCreateContext succeeds in all of those, and glad
+  // reports success too, because it loads what it can. The GL 2.0 entry points nanovg
+  // needs simply stay null, and the first of them - glCreateProgram, from
+  // nvgCreateContext a few lines after this function returns - is a call to address
+  // zero. The user sees the application vanish the instant it is started: no window,
+  // no message, exit code 0xC0000005, and nothing in any log.
+  //
+  // Exiting is not a happy outcome, but it is an honest one, and it is the same
+  // outcome as the crash with an explanation attached.
+  if (!GLAD_GL_VERSION_2_0)
+  {
+    DBGMSG("OpenGL 2.0 is not available; the graphics driver reports only the generic implementation\n");
+    wglMakeCurrent(NULL, NULL);
+    ReleaseDC(mPlugWnd, dc);
+
+    MessageBox(NULL,
+               "This computer does not provide OpenGL 2.0, which is needed to draw the interface.\n\n"
+               "That usually means one of:\n"
+               "  - a Remote Desktop session, which does not pass graphics through\n"
+               "  - a virtual machine without 3D acceleration\n"
+               "  - a graphics driver that is missing or failed to load\n\n"
+               "Install or repair the graphics driver, or run directly on the machine.",
+               "Graphics Error", MB_OK | MB_ICONERROR | MB_SETFOREGROUND);
+
+    ExitProcess(kGLUnavailableExitCode);
+  }
 
   glGetError();
 

@@ -473,6 +473,18 @@ bool IPlugAPPHost::RestoreActiveAudioStateAfterFailure(const char* message)
       mDeferredAudioError.Set(message);
   }
 
+  // VoLum: mActiveState only describes a stream that opened. Before the first one
+  // does, it is a default-constructed AppState, and reverting to it threw away the
+  // settings the user had - device, channels, buffer, rate - and then persisted the
+  // defaults over them. Starting VoLum once with the interface unplugged was enough
+  // to lose the configuration for good: plugging it back in restored the hardware but
+  // not the settings, because settings.ini no longer named it.
+  //
+  // There is nothing to revert to, so keep what the file said and let the user fix it
+  // in Preferences, or simply plug the device back in and start again.
+  if (!mHaveWorkingAudioState)
+    return false;
+
   if (mState == mActiveState)
     return false;
 
@@ -1060,6 +1072,7 @@ bool IPlugAPPHost::InitAudio(uint32_t inId, uint32_t outId, uint32_t sr, uint32_
     mDAC->takePendingDeviceReset();
 
     mActiveState = mState;
+    mHaveWorkingAudioState = true;
 
     // Persist a rate the device corrected, either before the open or during it.
     // Otherwise settings.ini keeps naming a rate that cannot be opened and every

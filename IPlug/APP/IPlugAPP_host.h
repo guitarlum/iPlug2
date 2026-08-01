@@ -315,6 +315,12 @@ private:
    * Shown once by PollAudioStatus and then cleared. */
   WDL_String mDeferredAudioError;
 
+  /** VoLum: true once a stream has opened, which is also when mActiveState starts
+   * describing something real. Until then there is no working state to fall back to,
+   * and treating the default-constructed one as a fallback destroys the user's saved
+   * audio settings. See RestoreActiveAudioStateAfterFailure. */
+  bool mHaveWorkingAudioState = false;
+
   /** VoLum: brake on the driver-follow logic in PollAudioStatus. */
   bool mFollowDriverChanges = true;
   int mAutoReopenCount = 0;
