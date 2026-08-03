@@ -324,6 +324,31 @@ void IPlugAPPHost::PopulatePreferencesDialog(HWND hwndDlg)
   #error NOT IMPLEMENTED
 #endif
 
+// VoLum: an ASIO driver is free to open at a rate other than the one it was asked
+// for, and several do - the clock is set in their own control panel, or the device
+// was left somewhere else by another application. Preferences shows the rate that
+// was actually opened, which is the truth but reads as a broken control: you choose
+// 96000, the box goes to 88200, and nothing explains it. Say it out loud instead.
+static void ReportSampleRateSubstitution(HWND hwndDlg, IPlugAPPHost* pAppHost)
+{
+  uint32_t requested = 0, actual = 0;
+  if (!pAppHost || !pAppHost->TakeSampleRateSubstitution(requested, actual))
+    return;
+
+  WDL_String msg;
+  msg.SetFormatted(512,
+                   "The audio driver did not accept %u Hz.\n\n"
+                   "It opened the device at %u Hz instead, and " BUNDLE_NAME " is now running at that rate. "
+                   "Sample rates on ASIO devices are usually set in the driver's own control panel - "
+                   "try Device Settings if you need a different one.",
+                   requested, actual);
+
+  // Captioned like the other audio notices ("Audio Error", "Graphics Error") rather
+  // than BUNDLE_NAME, which the main window already uses and which would make this
+  // box indistinguishable from it to anything enumerating windows, tests included.
+  MessageBox(hwndDlg, msg.Get(), "Sample Rate", MB_OK | MB_ICONINFORMATION);
+}
+
 WDL_DLGRET IPlugAPPHost::PreferencesDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
   IPlugAPPHost* _this = sInstance.get();
@@ -358,7 +383,10 @@ WDL_DLGRET IPlugAPPHost::PreferencesDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wPar
       {
         case IDOK:
           if(mActiveState != mState)
+          {
             _this->TryToChangeAudio();
+            ReportSampleRateSubstitution(hwndDlg, _this);
+          }
 
           gPreferencesHWND = NULL;
           EndDialog(hwndDlg, IDOK); // INI file will be changed see MainDialogProc
@@ -368,6 +396,7 @@ WDL_DLGRET IPlugAPPHost::PreferencesDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wPar
           // VoLum: the driver has the last word on the sample rate, so show what it
           // actually opened at rather than leaving the requested rate on screen.
           _this->PopulateAudioDialogs(hwndDlg);
+          ReportSampleRateSubstitution(hwndDlg, _this);
           break;
         case IDCANCEL:
           gPreferencesHWND = NULL;

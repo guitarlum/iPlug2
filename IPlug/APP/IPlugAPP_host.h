@@ -240,6 +240,10 @@ public:
    * Returns 0 when the device list cannot be trusted, in which case the caller keeps
    * what it had. */
   uint32_t NearestSupportedSampleRate(uint32_t desiredSR, int inputID, int outputID);
+
+  /** VoLum: reports, once, that the last stream opened at a rate other than the one
+   * requested, and clears the record. False when the last open was granted. */
+  bool TakeSampleRateSubstitution(uint32_t& requested, uint32_t& actual);
   
   static int AudioCallback(void* pOutputBuffer, void* pInputBuffer, uint32_t nFrames, double streamTime, RtAudioStreamStatus status, void* pUserData);
   static void MIDICallback(double deltatime, std::vector<uint8_t>* pMsg, void* pUserData);
@@ -320,6 +324,14 @@ private:
    * and treating the default-constructed one as a fallback destroys the user's saved
    * audio settings. See RestoreActiveAudioStateAfterFailure. */
   bool mHaveWorkingAudioState = false;
+
+  /** VoLum: the last time a stream opened at a rate other than the one asked for,
+   * so Preferences can say so. Showing the driver's rate is truthful but on its own
+   * it reads as the control being broken: you pick 96000, the box says 88200, and
+   * nothing connects the two. Zero when the last open got what it asked for.
+   * Consumed by TakeSampleRateSubstitution. */
+  uint32_t mSubstitutedFromSR = 0;
+  uint32_t mSubstitutedToSR = 0;
 
   /** VoLum: brake on the driver-follow logic in PollAudioStatus. */
   bool mFollowDriverChanges = true;

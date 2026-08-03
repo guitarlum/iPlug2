@@ -270,6 +270,13 @@ void IPlugAPPHost::UpdateINI()
   WritePrivateProfileString("midi", "inchan", buf, ini);
   sprintf(buf, "%u", mState.mMidiOutChan);
   WritePrivateProfileString("midi", "outchan", buf, ini);
+
+  // VoLum: the profile API keeps a write-behind cache of the file it most recently
+  // touched, and VoLum now leaves through TerminateProcess (see VoLumAppShutdown.h),
+  // which runs nothing on the way out - no CRT teardown, no flush on our behalf. The
+  // all-NULL call is the documented way to force the cache to disk, and without it a
+  // setting changed shortly before quitting can simply not be there next time.
+  WritePrivateProfileString(NULL, NULL, NULL, ini);
 }
 
 std::string IPlugAPPHost::GetAudioDeviceName(int idx) const
@@ -626,6 +633,19 @@ bool IPlugAPPHost::TryToChangeAudio()
   }
 
   return false;
+}
+
+// VoLum: see the declaration in IPlugAPP_host.h.
+bool IPlugAPPHost::TakeSampleRateSubstitution(uint32_t& requested, uint32_t& actual)
+{
+  if (mSubstitutedFromSR == 0)
+    return false;
+
+  requested = mSubstitutedFromSR;
+  actual = mSubstitutedToSR;
+  mSubstitutedFromSR = 0;
+  mSubstitutedToSR = 0;
+  return true;
 }
 
 // VoLum: see the declaration in IPlugAPP_host.h.
@@ -1078,7 +1098,16 @@ bool IPlugAPPHost::InitAudio(uint32_t inId, uint32_t outId, uint32_t sr, uint32_
     // Otherwise settings.ini keeps naming a rate that cannot be opened and every
     // launch repeats the correction - and, at startup, silently.
     if (mState.mAudioSR != requestedSR)
+    {
+      mSubstitutedFromSR = requestedSR;
+      mSubstitutedToSR = mState.mAudioSR;
       UpdateINI();
+    }
+    else
+    {
+      mSubstitutedFromSR = 0;
+      mSubstitutedToSR = 0;
+    }
   }
   catch (RtAudioError& e)
   {

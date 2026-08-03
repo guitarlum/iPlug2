@@ -41,6 +41,16 @@
 #include <cstdlib>
 #include <thread>
 
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
 namespace iplug
 {
 
@@ -74,6 +84,38 @@ inline constexpr int kVoLumPluginTeardownWatchdogMs = 20000;
  * like a clean one to the end-to-end scripts or an installer that waits on the
  * process. */
 inline constexpr int kVoLumShutdownWatchdogExitCode = 3;
+
+/** Leaves the process at once, without giving any loaded DLL a chance to run its
+ * DLL_PROCESS_DETACH.
+ *
+ * Returning from WinMain, exit() and _Exit() all end in ExitProcess, and
+ * ExitProcess calls DllMain(DLL_PROCESS_DETACH) on every module still loaded.
+ * Probing the audio devices loads every ASIO driver installed on the machine
+ * into this process - ASIO4ALL, FlexASIO, the interface's own - and the ASIO SDK
+ * never unloads them again. So every one of them, including the ones the user
+ * never selected, gets a vote on whether VoLum is allowed to quit.
+ *
+ * On 2026-08-03 one of them voted no. After a session of hard sample-rate and
+ * buffer-size switching, asio4all64.dll had a thread parked in SleepEx that never
+ * came back, and the exit hung inside it. Both VoLum teardowns had already logged
+ * "complete"; the process simply never finished leaving. It stayed in the process
+ * table with its handle table intact, which kept the single-instance mutex alive,
+ * so the next launch refused to start - and Task Manager would not end it either,
+ * because Windows had already marked it exited.
+ *
+ * TerminateProcess runs no DllMain. That is only safe because by the time either
+ * caller reaches here everything VoLum owns is finished: the settings file is
+ * written during plugin teardown, and volum.log opens, appends and closes on
+ * every single line. */
+[[noreturn]] inline void VoLumExitProcessNow(int exitCode)
+{
+#ifdef _WIN32
+  ::TerminateProcess(::GetCurrentProcess(), static_cast<UINT>(exitCode));
+#endif
+  // Unreachable on Windows; the portable path, and what [[noreturn]] needs. _Exit
+  // is already detach-free on macOS - it goes straight to the kernel.
+  std::_Exit(exitCode);
+}
 
 struct VoLumAudioTeardownPlan
 {
@@ -138,7 +180,10 @@ inline std::atomic<bool>& VoLumShutdownWatchdogArmed()
  *
  * Deliberately does no logging and touches nothing but the flag: its one job is
  * to be the thing that cannot itself get stuck. Bracket the teardown with log
- * lines instead - an unmatched "begin" in volum.log is the diagnosis.
+ * lines instead - an unmatched "begin" in volum.log is the diagnosis. For the
+ * same reason it leaves through VoLumExitProcessNow and not _Exit: _Exit ends in
+ * ExitProcess, which would hand control to the DllMain of the very driver the
+ * watchdog fired to escape.
  *
  * Called from a destructor, which is implicitly noexcept: a thread that cannot be
  * created must not turn resource exhaustion at quit into std::terminate. */
@@ -150,7 +195,7 @@ inline void VoLumArmShutdownWatchdog(int timeoutMs = kVoLumShutdownWatchdogMs)
     std::thread watchdog([timeoutMs] {
       std::this_thread::sleep_for(std::chrono::milliseconds(timeoutMs));
       if (VoLumShutdownWatchdogArmed().load())
-        std::_Exit(kVoLumShutdownWatchdogExitCode);
+        VoLumExitProcessNow(kVoLumShutdownWatchdogExitCode);
     });
     watchdog.detach();
   }

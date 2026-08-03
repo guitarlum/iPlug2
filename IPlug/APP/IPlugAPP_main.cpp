@@ -15,6 +15,9 @@
 #include "IPlugPlatform.h"
 #include "IPlugAPP_host.h"
 
+#include "VoLumAppInstanceGuard.h"
+#include "VoLumAppShutdown.h"
+
 #include "config.h"
 #include "resource.h"
 
@@ -66,22 +69,28 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpszCmdPa
         hWnd = FindWindow(0, BUNDLE_NAME);
       }
 
-      if (hWnd)
+      // The mutex alone does not settle it: it can outlive the process that made it.
+      // See VoLumAppInstanceGuard.h.
+      const VoLumInstanceStart decision =
+        VoLumDecideInstanceStart(hMutex != NULL, hWnd != NULL, hMutex != NULL && VoLumAnotherLiveInstanceExists());
+
+      if (hMutex)
+        CloseHandle(hMutex);
+
+      if (decision == VoLumInstanceStart::FocusExisting)
       {
         if (IsIconic(hWnd))
           ShowWindow(hWnd, SW_RESTORE);
 
         SetForegroundWindow(hWnd);
-        CloseHandle(hMutex);
         return 0;
       }
 
-      if (hMutex)
+      if (decision == VoLumInstanceStart::ReportStuckInstance)
       {
-        CloseHandle(hMutex);
         MessageBox(NULL,
-                   BUNDLE_NAME " is already running, but its window has closed.\n\n"
-                   "A previous session did not shut down completely. End the " BUNDLE_NAME
+                   BUNDLE_NAME " is still running, but its window has closed.\n\n"
+                   "A previous session has not finished shutting down. End the " BUNDLE_NAME
                    " process in Task Manager, then start " BUNDLE_NAME " again.",
                    BUNDLE_NAME, MB_OK | MB_ICONWARNING);
         return 0;
@@ -177,6 +186,14 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpszCmdPa
 #ifndef APP_ALLOW_MULTIPLE_INSTANCES
     ReleaseMutex(hMutex);
 #endif
+
+    // VoLum: leave here rather than returning into the CRT's exit path. The window
+    // is gone, the plugin was destroyed under WM_DESTROY and the settings file is
+    // written, so there is nothing left of ours to run - but returning would hand
+    // the process to ExitProcess, and with it to the DllMain of every ASIO driver
+    // on the machine. One of those is all it takes to strand the process. See
+    // VoLumAppShutdown.h.
+    VoLumExitProcessNow(0);
   }
   catch(std::exception e)
   {
