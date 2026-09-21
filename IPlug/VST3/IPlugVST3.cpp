@@ -170,7 +170,8 @@ tresult PLUGIN_API IPlugVST3::getMidiControllerAssignment(int32 busIndex, int16 
 {
   if (busIndex == 0 && midiChannel < VST3_NUM_CC_CHANS)
   {
-    tag = kMIDICCParamStartIdx + (midiChannel * kCountCtrlNumber) + midiCCNumber;
+    // Stride is kCountCtrlNumber + 1 so kCtrlProgramChange (130) occupies the slot after Pitch Bend.
+    tag = kMIDICCParamStartIdx + (midiChannel * (kCountCtrlNumber + 1)) + midiCCNumber;
     return kResultTrue;
   }
 

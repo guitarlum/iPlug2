@@ -150,6 +150,8 @@ public:
 
         mParameters.addParameter(STR16("Channel Aftertouch"), STR16(""), 0, 0, 0, paramIdx++, unitID);
         mParameters.addParameter(STR16("Pitch Bend"), STR16(""), 0, 0.5, 0, paramIdx++, unitID);
+        // kCtrlProgramChange == kCountCtrlNumber (130). VST3 delivers it via IMidiMapping, not Event.
+        mParameters.addParameter(STR16("Program Change"), STR16(""), 0, 0, 0, paramIdx++, unitID);
       }
     }
 #endif

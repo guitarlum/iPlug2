@@ -321,8 +321,8 @@ void IPlugVST3ProcessorBase::ProcessParameterChanges(ProcessData& data, IPlugQue
               else if (idx >= kMIDICCParamStartIdx)
               {
                 int index = idx - kMIDICCParamStartIdx;
-                int channel = index / kCountCtrlNumber;
-                int ctrlr = index % kCountCtrlNumber;
+                int channel = index / (kCountCtrlNumber + 1);
+                int ctrlr = index % (kCountCtrlNumber + 1);
 
                 IMidiMsg msg;
 
@@ -330,6 +330,8 @@ void IPlugVST3ProcessorBase::ProcessParameterChanges(ProcessData& data, IPlugQue
                   msg.MakeChannelATMsg((int) (value * 127.), offsetSamples, channel);
                 else if (ctrlr == kPitchBend)
                   msg.MakePitchWheelMsg((value * 2.)-1., channel, offsetSamples);
+                else if (ctrlr == kCtrlProgramChange)
+                  msg.MakeProgramChange((int) (value * 127.), channel, offsetSamples);
                 else
                   msg.MakeControlChangeMsg((IMidiMsg::EControlChangeMsg) ctrlr, value, channel, offsetSamples);
 
