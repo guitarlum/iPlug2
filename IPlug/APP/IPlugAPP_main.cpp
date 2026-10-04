@@ -126,13 +126,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpszCmdPa
       __SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     }
 
+    // VoLum: IDD_DIALOG_MAIN has no menu bar on Windows; Settings opens Preferences.
     CreateDialog(gHINSTANCE, MAKEINTRESOURCE(IDD_DIALOG_MAIN), GetDesktopWindow(), IPlugAPPHost::MainDlgProc);
-
-#if !defined _DEBUG || defined NO_IGRAPHICS
-    HMENU menu = GetMenu(gHWND);
-    RemoveMenu(menu, 1, MF_BYPOSITION);
-    DrawMenuBar(gHWND);
-#endif
 
     for(;;)
     {

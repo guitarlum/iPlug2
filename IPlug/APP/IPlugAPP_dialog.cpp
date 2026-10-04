@@ -15,6 +15,7 @@
 #ifdef OS_WIN
 #include "asio.h"
 #include <shellapi.h>
+#include "VoLumWinChrome.h"
 #define GET_MENU() GetMenu(gHWND)
 #elif defined OS_MAC
 #define GET_MENU() SWELL_GetCurrentMenu()
@@ -22,7 +23,8 @@
 
 using namespace iplug;
 
-static constexpr const char* kVoLumManualURL = "https://github.com/guitarlum/VoLum/blob/main/docs/user-guide.en.md";
+// VoLum: config.h owns the URL so the About card's manual link opens the same page.
+static constexpr const char* kVoLumManualURL = VOLUM_MANUAL_URL;
 
 // VoLum: timer id for the main window's audio-status poll. See PollAudioStatus.
 static constexpr UINT_PTR kAudioStatusTimerID = 1001;
@@ -261,6 +263,12 @@ bool IPlugAPPHost::PopulateMidiDialogs(HWND hwndDlg)
 
     SendDlgItemMessage(hwndDlg,IDC_COMBO_MIDI_IN_DEV,CB_SETCURSEL, indevidx, 0);
 
+    // VoLum: Preferences only offers the MIDI input port. VoLum sends no MIDI, and
+    // MIDICallback never filters on the input channel, so those three combos are gone
+    // from main.rc. Their stored values stay as they are.
+    if (!GetDlgItem(hwndDlg, IDC_COMBO_MIDI_OUT_DEV))
+      return true;
+
     for (int i=0; i<mMidiOutputDevNames.size(); i++ )
     {
       SendDlgItemMessage(hwndDlg,IDC_COMBO_MIDI_OUT_DEV,CB_ADDSTRING,0,(LPARAM)mMidiOutputDevNames[i].c_str());
@@ -364,11 +372,23 @@ WDL_DLGRET IPlugAPPHost::PreferencesDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wPar
     str.Set(tempString.c_str());
   };
   
+#ifdef OS_WIN
+  // VoLum: paints the dialog in VoLum's palette; see VoLumWinChrome.h.
+  INT_PTR skinResult = 0;
+  if (VoLumPrefsSkinMessage(hwndDlg, uMsg, wParam, lParam, skinResult))
+    return skinResult;
+#endif
+
   int v = 0;
   switch(uMsg)
   {
     case WM_INITDIALOG:
       gPreferencesHWND = hwndDlg;
+#ifdef OS_WIN
+      // VoLum: before Populate - the skin rebuilds the combos it fills.
+      VoLumApplyDarkCaption(hwndDlg);
+      VoLumPrefsSkinAttach(hwndDlg, gHINSTANCE, JOSEFINSANS_FN, JOSEFINSANS_BOLD_HEAVY_FN);
+#endif
       _this->PopulatePreferencesDialog(hwndDlg);
       mTempState = mState;
       
@@ -376,6 +396,9 @@ WDL_DLGRET IPlugAPPHost::PreferencesDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wPar
 
     case WM_DESTROY:
       gPreferencesHWND = NULL;
+#ifdef OS_WIN
+      VoLumPrefsSkinDetach(hwndDlg);
+#endif
       return 0;
 
     case WM_COMMAND:
@@ -649,6 +672,9 @@ WDL_DLGRET IPlugAPPHost::MainDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPA
 
       ClientResize(hwndDlg, width, height);
 
+#ifdef OS_WIN
+      VoLumApplyDarkCaption(hwndDlg);
+#endif
       ShowWindow(hwndDlg, SW_SHOW);
 
       // VoLum: drives IPlugAPPHost::PollAudioStatus - reports a startup audio failure
