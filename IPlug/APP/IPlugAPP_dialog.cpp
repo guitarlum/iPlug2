@@ -614,6 +614,7 @@ WDL_DLGRET IPlugAPPHost::PreferencesDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wPar
           {
             int idx = (int) SendDlgItemMessage(hwndDlg, IDC_COMBO_MIDI_IN_DEV, CB_GETCURSEL, 0, 0);
             getComboString(mState.mMidiInDev, IDC_COMBO_MIDI_IN_DEV, idx);
+            mState.mMidiInDevNameIsStable = true;
             _this->SelectMIDIDevice(ERoute::kInput, mState.mMidiInDev.Get(), true);
           }
           break;
@@ -623,6 +624,7 @@ WDL_DLGRET IPlugAPPHost::PreferencesDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wPar
           {
             int idx = (int) SendDlgItemMessage(hwndDlg, IDC_COMBO_MIDI_OUT_DEV, CB_GETCURSEL, 0, 0);
             getComboString(mState.mMidiOutDev, IDC_COMBO_MIDI_OUT_DEV, idx);
+            mState.mMidiOutDevNameIsStable = true;
             _this->SelectMIDIDevice(ERoute::kOutput, mState.mMidiOutDev.Get(), true);
           }
           break;

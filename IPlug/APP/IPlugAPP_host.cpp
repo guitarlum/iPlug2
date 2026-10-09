@@ -126,7 +126,10 @@ bool IPlugAPPHost::Init()
   return true;
 }
 
-bool IPlugAPPHost::OpenWindow(HWND pParent) { return mIPlug->OpenWindow(pParent) != nullptr; }
+bool IPlugAPPHost::OpenWindow(HWND pParent)
+{
+  return mIPlug->OpenWindow(pParent) != nullptr;
+}
 
 void IPlugAPPHost::CloseWindow()
 {
@@ -172,10 +175,8 @@ bool IPlugAPPHost::InitState()
       
       mState.mAudioDriverType = GetPrivateProfileInt("audio", "driver", 0, mINIPath.Get());
 
-      GetPrivateProfileString("audio", "indev", "Built-in Input", buf, STRBUFSZ, mINIPath.Get());
-      mState.mAudioInDev.Set(buf);
-      GetPrivateProfileString("audio", "outdev", "Built-in Output", buf, STRBUFSZ, mINIPath.Get());
-      mState.mAudioOutDev.Set(buf);
+      GetPrivateProfileString("audio", "indev", "Built-in Input", buf, STRBUFSZ, mINIPath.Get()); mState.mAudioInDev.Set(buf);
+      GetPrivateProfileString("audio", "outdev", "Built-in Output", buf, STRBUFSZ, mINIPath.Get()); mState.mAudioOutDev.Set(buf);
 
       //audio
       mState.mAudioInChanL = GetPrivateProfileInt("audio", "in1", 1, mINIPath.Get()); // 1 is first audio input
@@ -341,7 +342,10 @@ void IPlugAPPHost::UpdateINI()
   WritePrivateProfileString(NULL, NULL, NULL, ini);
 }
 
-std::string IPlugAPPHost::GetAudioDeviceName(int idx) const { return mAudioIDDevNames.at(idx); }
+std::string IPlugAPPHost::GetAudioDeviceName(int idx) const
+{
+  return mAudioIDDevNames.at(idx);
+}
 
 int IPlugAPPHost::GetAudioDeviceIdx(const char* deviceNameToTest) const
 {
@@ -639,7 +643,7 @@ bool IPlugAPPHost::RestoreActiveAudioStateAfterFailure(const char* message)
     if (!restorePlan.persistActiveState)
       mState = stateToKeep;
     if (restorePlan.persistActiveState)
-    UpdateINI();
+      UpdateINI();
     return false;
   }
 
@@ -658,7 +662,7 @@ bool IPlugAPPHost::RestoreActiveAudioStateAfterFailure(const char* message)
   if (!restorePlan.persistActiveState)
     mState = stateToKeep;
   if (restorePlan.persistActiveState)
-  UpdateINI();
+    UpdateINI();
   return false;
 }
 
@@ -979,7 +983,7 @@ bool IPlugAPPHost::SelectMIDIDevice(ERoute direction, const char* pPortName, boo
           mState.mMidiInDev.Set(stableName);
           mState.mMidiInDevNameIsStable = true;
           if (changed)
-          UpdateINI();
+            UpdateINI();
         }
         return opened;
       }
@@ -1030,7 +1034,7 @@ bool IPlugAPPHost::SelectMIDIDevice(ERoute direction, const char* pPortName, boo
           mState.mMidiOutDev.Set(stableName);
           mState.mMidiOutDevNameIsStable = true;
           if (changed)
-          UpdateINI();
+            UpdateINI();
         }
         return opened;
       }
@@ -1064,7 +1068,8 @@ void IPlugAPPHost::CloseAudio()
   if (wasRunning)
     mAudioEnding = true;
 
-  const VoLumAudioTeardownPlan plan = VoLumRunAudioTeardown(true, wasRunning, [this] { return mAudioDone; }, [](int ms) { Sleep(ms); });
+  const VoLumAudioTeardownPlan plan = VoLumRunAudioTeardown(
+    true, wasRunning, [this] { return mAudioDone; }, [](int ms) { Sleep(ms); });
 
   if (plan.drainBeforeClose)
   {
@@ -1129,28 +1134,16 @@ bool IPlugAPPHost::InitAudio(uint32_t inId, uint32_t outId, uint32_t sr, uint32_
   // a failing probe degrades gracefully instead of taking the host down.
   RtAudio::DeviceInfo inDevInfo;
   RtAudio::DeviceInfo outDevInfo;
-  try
-  {
-    inDevInfo = mDAC->getDeviceInfo(inId);
-  }
-  catch (RtAudioError& e)
-  {
-    e.printMessage();
-  }
+  try { inDevInfo = mDAC->getDeviceInfo(inId); }
+  catch (RtAudioError& e) { e.printMessage(); }
   if (outId == inId)
   {
     outDevInfo = inDevInfo;
   }
   else
   {
-    try
-    {
-      outDevInfo = mDAC->getDeviceInfo(outId);
-    }
-    catch (RtAudioError& e)
-    {
-      e.printMessage();
-    }
+    try { outDevInfo = mDAC->getDeviceInfo(outId); }
+    catch (RtAudioError& e) { e.printMessage(); }
   }
 
   const int pluginIns  = GetPlug()->MaxNChannels(ERoute::kInput);
@@ -1207,8 +1200,8 @@ bool IPlugAPPHost::InitAudio(uint32_t inId, uint32_t outId, uint32_t sr, uint32_
 
   mBufferSize = iovs; // mBufferSize may get changed by stream
 
-  DBGMSG("\ntrying to start audio stream @ %i sr, %i buffer size\nindev = %i:%s\noutdev = %i:%s\ninputs = %i\noutputs = %i\n", sr, mBufferSize, inId, GetAudioDeviceName(inId).c_str(), outId,
-         GetAudioDeviceName(outId).c_str(), iParams.nChannels, oParams.nChannels);
+  DBGMSG("\ntrying to start audio stream @ %i sr, %i buffer size\nindev = %i:%s\noutdev = %i:%s\ninputs = %i\noutputs = %i\n",
+         sr, mBufferSize, inId, GetAudioDeviceName(inId).c_str(), outId, GetAudioDeviceName(outId).c_str(), iParams.nChannels, oParams.nChannels);
 
   RtAudio::StreamOptions options;
   options.flags = RTAUDIO_NONINTERLEAVED;
@@ -1277,7 +1270,8 @@ bool IPlugAPPHost::InitAudio(uint32_t inId, uint32_t outId, uint32_t sr, uint32_
 
     // The one line that settles "the display says 48 kHz but my interface is at 44.1":
     // this is the rate and buffer the driver actually opened, not what was requested.
-    VOLUM_LOG("audio", "stream open: " + std::to_string(static_cast<int>(mSampleRate)) + " Hz, buffer " + std::to_string(static_cast<int>(mBufferSize)) + ", requested "
+    VOLUM_LOG("audio", "stream open: " + std::to_string(static_cast<int>(mSampleRate)) + " Hz, buffer "
+                         + std::to_string(static_cast<int>(mBufferSize)) + ", requested "
                          + std::to_string(static_cast<int>(requestedSR)) + " Hz");
 
     // VoLum: openStream renegotiates mBufferSize when the driver refuses the
@@ -1463,7 +1457,9 @@ int IPlugAPPHost::AudioCallback(void* pOutputBuffer, void* pInputBuffer, uint32_
       }
 
       const int writeIdx = _this->mAudioVectorAccumulator.GetInputWriteIndex();
-      const double inputSample = (pInputBufferD != nullptr && devIns > 0) ? pInputBufferD[((inOffset0 < devIns) ? inOffset0 : 0) * nFrames + i] : 0.0;
+      const double inputSample = (pInputBufferD != nullptr && devIns > 0)
+        ? pInputBufferD[((inOffset0 < devIns) ? inOffset0 : 0) * nFrames + i]
+        : 0.0;
       for (int c = 0; c < pluginIns; c++)
       {
         // The dialog exposes one input pair; preserve the existing behavior of
@@ -1473,7 +1469,10 @@ int IPlugAPPHost::AudioCallback(void* pOutputBuffer, void* pInputBuffer, uint32_
 
       if (_this->mAudioVectorAccumulator.PushInputFrame())
       {
-        _this->mIPlug->AppProcess(_this->mAudioVectorAccumulator.GetInputPtrs(), _this->mAudioVectorAccumulator.GetOutputPtrs(), APP_SIGNAL_VECTOR_SIZE);
+        _this->mIPlug->AppProcess(
+          _this->mAudioVectorAccumulator.GetInputPtrs(),
+          _this->mAudioVectorAccumulator.GetOutputPtrs(),
+          APP_SIGNAL_VECTOR_SIZE);
         _this->mAudioVectorAccumulator.CommitProcessedOutput();
         _this->mSamplesElapsed += APP_SIGNAL_VECTOR_SIZE;
       }
@@ -1535,3 +1534,4 @@ void IPlugAPPHost::ErrorCallback(RtAudioError::Type type, const std::string &err
 {
   //TODO:
 }
+
