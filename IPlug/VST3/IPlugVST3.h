@@ -110,6 +110,11 @@ public:
   {
     return GetProgramListInfo(this, listIndex, info);
   }
+
+  Steinberg::tresult PLUGIN_API getUnitByBus(Steinberg::Vst::MediaType type, Steinberg::Vst::BusDirection dir, Steinberg::int32 busIndex, Steinberg::int32 channel, Steinberg::Vst::UnitID& unitId) override
+  {
+    return GetUnitByBus(type, dir, busIndex, channel, unitId);
+  }
   
   // IInfoListener
   Steinberg::tresult PLUGIN_API setChannelContextInfos(Steinberg::Vst::IAttributeList* list) override;

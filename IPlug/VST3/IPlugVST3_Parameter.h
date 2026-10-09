@@ -15,6 +15,7 @@
 #include "base/source/fstring.h"
 
 #include "IPlugParameter.h"
+#include "IPlugVST3_MidiParams.h"
 
 BEGIN_IPLUG_NAMESPACE
 
@@ -96,6 +97,43 @@ public:
   }
   
   OBJ_METHODS(IPlugVST3PresetParameter, Steinberg::Vst::Parameter)
+};
+
+/** VST3 per-MIDI-channel program change parameter. It is the parameter of that channel's program list,
+ * which is how hosts deliver MIDI Program Change to a VST3 plug-in. It is not an iPlug preset. */
+class IPlugVST3MIDIProgramParameter : public Steinberg::Vst::Parameter
+{
+public:
+  IPlugVST3MIDIProgramParameter(int channel, Steinberg::Vst::UnitID unitID)
+  {
+    WDL_String title;
+    title.SetFormatted(32, "MIDI Program CH%i", channel + 1);
+    Steinberg::UString(info.title, str16BufferSize(Steinberg::Vst::String128)).fromAscii(title.Get());
+    info.id = kVST3MIDIProgramParamStartIdx + channel;
+    info.stepCount = kVST3MIDIProgramCount - 1;
+    info.defaultNormalizedValue = 0.;
+    info.flags = Steinberg::Vst::ParameterInfo::kCanAutomate | Steinberg::Vst::ParameterInfo::kIsList | Steinberg::Vst::ParameterInfo::kIsProgramChange;
+    info.unitId = unitID;
+  }
+
+  void toString(Steinberg::Vst::ParamValue valueNormalized, Steinberg::Vst::String128 string) const override
+  {
+    WDL_String display;
+    display.SetFormatted(32, "Program %i", VST3NormalizedToMIDI7Bit(valueNormalized));
+    Steinberg::UString(string, 128).fromAscii(display.Get());
+  }
+
+  Steinberg::Vst::ParamValue toPlain(Steinberg::Vst::ParamValue valueNormalized) const override
+  {
+    return VST3NormalizedToMIDI7Bit(valueNormalized);
+  }
+
+  Steinberg::Vst::ParamValue toNormalized(Steinberg::Vst::ParamValue plainValue) const override
+  {
+    return plainValue / info.stepCount;
+  }
+
+  OBJ_METHODS(IPlugVST3MIDIProgramParameter, Steinberg::Vst::Parameter)
 };
 
 /** VST3 bypass parameter helper */

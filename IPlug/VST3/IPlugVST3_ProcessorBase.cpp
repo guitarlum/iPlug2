@@ -13,10 +13,13 @@
 #include "pluginterfaces/vst/ivstmidicontrollers.h"
 #include "public.sdk/source/vst/vsteventshelper.h"
 #include "IPlugVST3_ProcessorBase.h"
+#include "IPlugVST3_MidiParams.h"
 
 using namespace iplug;
 using namespace Steinberg;
 using namespace Vst;
+
+static_assert(kVST3MIDIParamsPerChannel == kCountCtrlNumber + 1, "per-channel MIDI parameter block must end at kCtrlProgramChange");
 
 #ifndef CUSTOM_BUSTYPE_FUNC
 uint64_t iplug::GetAPIBusTypeForChannelIOConfig(int configIdx, ERoute dir, int busIdx, const IOConfig* pConfig, WDL_TypedBuf<uint64_t>* APIBusTypes)
@@ -318,22 +321,29 @@ void IPlugVST3ProcessorBase::ProcessParameterChanges(ProcessData& data, IPlugQue
                 mPlug.mParams_mutex.Leave();
 #endif
               }
-              else if (idx >= kMIDICCParamStartIdx)
+              else if (VST3MIDIProgramParamChannel(idx, kVST3MaxMIDIChannels) >= 0)
+              {
+                IMidiMsg msg;
+                msg.MakeProgramChange(VST3NormalizedToMIDI7Bit(value), VST3MIDIProgramParamChannel(idx, kVST3MaxMIDIChannels), offsetSamples);
+                fromProcessor.Push(msg);
+                ProcessMidiMsg(msg);
+              }
+              else if (idx >= kMIDICCParamStartIdx && idx < kVST3MIDIProgramParamStartIdx)
               {
                 int index = idx - kMIDICCParamStartIdx;
-                int channel = index / (kCountCtrlNumber + 1);
-                int ctrlr = index % (kCountCtrlNumber + 1);
+                int channel = index / kVST3MIDIParamsPerChannel;
+                int ctrlr = index % kVST3MIDIParamsPerChannel;
 
                 IMidiMsg msg;
 
                 if (ctrlr == kAfterTouch)
-                  msg.MakeChannelATMsg((int) (value * 127.), offsetSamples, channel);
+                  msg.MakeChannelATMsg(VST3NormalizedToMIDI7Bit(value), offsetSamples, channel);
                 else if (ctrlr == kPitchBend)
                   msg.MakePitchWheelMsg((value * 2.)-1., channel, offsetSamples);
                 else if (ctrlr == kCtrlProgramChange)
-                  msg.MakeProgramChange((int) (value * 127.), channel, offsetSamples);
+                  msg.MakeProgramChange(VST3NormalizedToMIDI7Bit(value), channel, offsetSamples);
                 else
-                  msg.MakeControlChangeMsg((IMidiMsg::EControlChangeMsg) ctrlr, value, channel, offsetSamples);
+                  msg = IMidiMsg(offsetSamples, static_cast<uint8_t>((IMidiMsg::kControlChange << 4) | channel), static_cast<uint8_t>(ctrlr), static_cast<uint8_t>(VST3NormalizedToMIDI7Bit(value)));
 
                 fromProcessor.Push(msg);
                 ProcessMidiMsg(msg);
