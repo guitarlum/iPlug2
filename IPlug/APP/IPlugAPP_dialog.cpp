@@ -331,19 +331,14 @@ void IPlugAPPHost::PopulatePreferencesDialog(HWND hwndDlg)
 // was left somewhere else by another application. Preferences shows the rate that
 // was actually opened, which is the truth but reads as a broken control: you choose
 // 96000, the box goes to 88200, and nothing explains it. Say it out loud instead.
-static void ReportSampleRateSubstitution(HWND hwndDlg, IPlugAPPHost* pAppHost)
+static void ReportSampleRateSubstitution(HWND hwndDlg, IPlugAPPHost* pAppHost, bool asioDriver)
 {
   uint32_t requested = 0, actual = 0;
   if (!pAppHost || !pAppHost->TakeSampleRateSubstitution(requested, actual))
     return;
 
   WDL_String msg;
-  msg.SetFormatted(512,
-                   "The audio driver did not accept %u Hz.\n\n"
-                   "It opened the device at %u Hz instead, and " BUNDLE_NAME " is now running at that rate. "
-                   "Sample rates on ASIO devices are usually set in the driver's own control panel - "
-                   "try Device Settings if you need a different one.",
-                   requested, actual);
+  msg.Set(VoLumSampleRateNoticeText(asioDriver, requested, actual, BUNDLE_NAME).c_str());
 
   // Captioned like the other audio notices ("Audio Error", "Graphics Error") rather
   // than BUNDLE_NAME, which the main window already uses and which would make this
@@ -413,7 +408,7 @@ WDL_DLGRET IPlugAPPHost::PreferencesDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wPar
           if (audioPlan.restartOnOK)
           {
             _this->TryToChangeAudio(true);
-            ReportSampleRateSubstitution(hwndDlg, _this);
+            ReportSampleRateSubstitution(hwndDlg, _this, _this->mState.mAudioDriverType == kDeviceASIO);
           }
           if (_this->GetMIDIPortNumber(ERoute::kInput, mState.mMidiInDev.Get(), mState.mMidiInDevNameIsStable) > 0
               && _this->mMidiIn && !_this->mMidiIn->isPortOpen())
@@ -430,7 +425,7 @@ WDL_DLGRET IPlugAPPHost::PreferencesDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wPar
           // VoLum: the driver has the last word on the sample rate, so show what it
           // actually opened at rather than leaving the requested rate on screen.
           _this->PopulateAudioDialogs(hwndDlg);
-          ReportSampleRateSubstitution(hwndDlg, _this);
+          ReportSampleRateSubstitution(hwndDlg, _this, _this->mState.mAudioDriverType == kDeviceASIO);
           break;
         case IDCANCEL:
         {

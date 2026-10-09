@@ -215,6 +215,22 @@ inline VoLumStereoRoute VoLumRouteStereoSample(double left, double right, bool s
   return {left, right, false};
 }
 
+// The notice shown when the device opened at a rate other than the one asked for.
+// Only an ASIO driver has its own control panel to change the clock in; pointing a
+// DirectSound user at "Device Settings" sent them to a button that is disabled for
+// that driver, and left the real reason (the driver does not offer that rate) unsaid.
+inline std::string VoLumSampleRateNoticeText(bool asioDriver, uint32_t requested, uint32_t actual, const char* appName)
+{
+  const std::string app = appName ? appName : "";
+  if (asioDriver)
+    return "The audio driver did not accept " + std::to_string(requested) + " Hz.\n\nIt opened the device at "
+           + std::to_string(actual) + " Hz instead, and " + app
+           + " is now running at that rate. Sample rates on ASIO devices are usually set in the driver's own control "
+             "panel - try Device Settings if you need a different one.";
+  return "The audio device does not offer " + std::to_string(requested) + " Hz in this driver.\n\n" + app
+         + " opened it at " + std::to_string(actual) + " Hz instead and is now running at that rate.";
+}
+
 inline std::vector<uint32_t> VoLumBufferSizeChoices(uint32_t activeSize)
 {
   static constexpr uint32_t kStandard[] = {48, 64, 96, 128, 256, 512, 1024, 2048, 4096, 8192};
