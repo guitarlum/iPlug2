@@ -185,7 +185,8 @@ bool IPlugAPPHost::InitState()
       mState.mAudioOutChanR = GetPrivateProfileInt("audio", "out2", 2, mINIPath.Get());
       //mState.mAudioInIsMono = GetPrivateProfileInt("audio", "monoinput", 0, mINIPath.Get());
 
-      mState.mBufferSize = NormalizeAPPBufferSize(GetPrivateProfileInt("audio", "buffer", 512, mINIPath.Get()));
+      const int storedBufferSize = GetPrivateProfileInt("audio", "buffer", 512, mINIPath.Get());
+      mState.mBufferSize = storedBufferSize > 0 ? static_cast<uint32_t>(storedBufferSize) : 1u;
       mState.mAudioSR = GetPrivateProfileInt("audio", "sr", 44100, mINIPath.Get());
 
       //midi
@@ -308,11 +309,15 @@ int IPlugAPPHost::GetMIDIPortNumber(ERoute direction, const char* nameToTest) co
     if(!strcmp(nameToTest, "virtual input")) return 1;
   #endif
     
-    for (int i = 0; i < mMidiIn->getPortCount(); i++)
-    {
-      if(!strcmp(nameToTest, mMidiIn->getPortName(i).c_str()))
-        return (i + start);
-    }
+    const int i = VoLumResolveMidiPort(nameToTest, mMidiInputPortNames,
+#ifdef OS_WIN
+                                      true
+#else
+                                      false
+#endif
+    );
+    if (i >= 0)
+      return i + start;
   }
   else
   {
@@ -323,11 +328,15 @@ int IPlugAPPHost::GetMIDIPortNumber(ERoute direction, const char* nameToTest) co
     if(!strcmp(nameToTest, "virtual output")) return 1;
   #endif
   
-    for (int i = 0; i < mMidiOut->getPortCount(); i++)
-    {
-      if(!strcmp(nameToTest, mMidiOut->getPortName(i).c_str()))
-        return (i + start);
-    }
+    const int i = VoLumResolveMidiPort(nameToTest, mMidiOutputPortNames,
+#ifdef OS_WIN
+                                      true
+#else
+                                      false
+#endif
+    );
+    if (i >= 0)
+      return i + start;
   }
   
   return -1;
@@ -409,6 +418,11 @@ void IPlugAPPHost::ProbeMidiIO()
     return;
   else
   {
+    mMidiInputDevNames.clear();
+    mMidiOutputDevNames.clear();
+    mMidiInputPortNames.clear();
+    mMidiOutputPortNames.clear();
+
     int nInputPorts = mMidiIn->getPortCount();
 
     mMidiInputDevNames.push_back(OFF_TEXT);
@@ -417,10 +431,16 @@ void IPlugAPPHost::ProbeMidiIO()
     mMidiInputDevNames.push_back("virtual input");
 #endif
 
-    for (int i=0; i<nInputPorts; i++ )
-    {
-      mMidiInputDevNames.push_back(mMidiIn->getPortName(i));
-    }
+    std::vector<std::string> rawInputNames;
+    rawInputNames.reserve(nInputPorts);
+    for (int i = 0; i < nInputPorts; ++i)
+      rawInputNames.push_back(mMidiIn->getPortName(i));
+#ifdef OS_WIN
+    mMidiInputPortNames = VoLumStableMidiPortNames(rawInputNames, true);
+#else
+    mMidiInputPortNames = rawInputNames;
+#endif
+    mMidiInputDevNames.insert(mMidiInputDevNames.end(), mMidiInputPortNames.begin(), mMidiInputPortNames.end());
 
     int nOutputPorts = mMidiOut->getPortCount();
 
@@ -430,15 +450,20 @@ void IPlugAPPHost::ProbeMidiIO()
     mMidiOutputDevNames.push_back("virtual output");
 #endif
 
-    for (int i=0; i<nOutputPorts; i++ )
-    {
-      mMidiOutputDevNames.push_back(mMidiOut->getPortName(i));
-      //This means the virtual output port wont be added as an input
-    }
+    std::vector<std::string> rawOutputNames;
+    rawOutputNames.reserve(nOutputPorts);
+    for (int i = 0; i < nOutputPorts; ++i)
+      rawOutputNames.push_back(mMidiOut->getPortName(i));
+#ifdef OS_WIN
+    mMidiOutputPortNames = VoLumStableMidiPortNames(rawOutputNames, true);
+#else
+    mMidiOutputPortNames = rawOutputNames;
+#endif
+    mMidiOutputDevNames.insert(mMidiOutputDevNames.end(), mMidiOutputPortNames.begin(), mMidiOutputPortNames.end());
   }
 }
 
-bool IPlugAPPHost::AudioSettingsInStateAreEqual(AppState& os, AppState& ns)
+bool IPlugAPPHost::AudioSettingsInStateAreEqual(const AppState& os, const AppState& ns)
 {
   if (os.mAudioDriverType != ns.mAudioDriverType) return false;
   if (strcmp(os.mAudioInDev.Get(), ns.mAudioInDev.Get())) return false;
@@ -453,7 +478,7 @@ bool IPlugAPPHost::AudioSettingsInStateAreEqual(AppState& os, AppState& ns)
   return true;
 }
 
-bool IPlugAPPHost::MIDISettingsInStateAreEqual(AppState& os, AppState& ns)
+bool IPlugAPPHost::MIDISettingsInStateAreEqual(const AppState& os, const AppState& ns)
 {
   if (strcmp(os.mMidiInDev.Get(), ns.mMidiInDev.Get())) return false;
   if (strcmp(os.mMidiOutDev.Get(), ns.mMidiOutDev.Get())) return false;
@@ -554,8 +579,9 @@ bool IPlugAPPHost::TryToChangeAudioDriverType()
     return false;
 }
 
-bool IPlugAPPHost::TryToChangeAudio()
+bool IPlugAPPHost::TryToChangeAudio(bool explicitUserChange)
 {
+  const AppState requestedState = mState;
   int inputID = -1;
   int outputID = -1;
 
@@ -614,19 +640,35 @@ bool IPlugAPPHost::TryToChangeAudio()
   // DirectSound/CoreAudio input choice, and copying the ASIO driver name over it
   // silently destroyed that choice on every switch back.
 
-  if (resetToDefault)
+  const bool persistFallback = VoLumShouldPersistAudioFallback(explicitUserChange);
+  if (resetToDefault && persistFallback)
   {
     DBGMSG("couldn't find previous audio device, reseting to default\n");
 
     UpdateINI();
   }
+  else if (resetToDefault)
+  {
+    DBGMSG("couldn't find previous audio device, using the default for this session only\n");
+  }
 
   if (failedToFindDevice)
+  {
+    if (!persistFallback)
+      mState = requestedState;
     return RestoreActiveAudioStateAfterFailure("Audio device is not available. Reverting to the previous working settings.");
+  }
 
   if (inputID != -1 && outputID != -1)
   {
-    if (InitAudio(inputID, outputID, mState.mAudioSR, mState.mBufferSize))
+    const bool runtimeFallback = resetToDefault && !persistFallback;
+    mSuppressAudioStatePersistence = runtimeFallback;
+    const bool opened = InitAudio(inputID, outputID, mState.mAudioSR, mState.mBufferSize);
+    mSuppressAudioStatePersistence = false;
+    if (runtimeFallback)
+      mState = requestedState;
+
+    if (opened)
       return true;
 
     return RestoreActiveAudioStateAfterFailure("Audio device failed to open. Reverting to the previous working settings.");
@@ -759,12 +801,10 @@ bool IPlugAPPHost::SelectMIDIDevice(ERoute direction, const char* pPortName)
   // process is WinMain's, so an unguarded throw exited with no window and no
   // message. Falling back to "off" in memory keeps the app launchable.
   //
-  // Deliberately NOT persisted: the usual cause is transient (a DAW still quitting,
-  // a vendor control panel, a second VoLum), and writing "off" to settings.ini on
-  // the first failure turned a five-second conflict into a permanent loss of the
-  // user's MIDI configuration, with nothing on screen to explain it. The file keeps
-  // naming the device, so the next launch tries again; Preferences reads mState, so
-  // the selector correctly shows "off" for this session.
+  // Deliberately neither changed nor persisted: the usual cause is transient (a DAW
+  // still quitting, a vendor control panel, a second VoLum). The closed port itself
+  // is the runtime "off" state; mState remains the requested controller so a later
+  // probe or launch can reconnect it.
   auto openOrTurnOff = [&](auto&& open) {
     try
     {
@@ -775,10 +815,6 @@ bool IPlugAPPHost::SelectMIDIDevice(ERoute direction, const char* pPortName)
     {
       e.printMessage();
       VOLUM_LOG("midi", "could not open the saved MIDI port; MIDI is off for this session only");
-      if (direction == ERoute::kInput)
-        mState.mMidiInDev.Set(OFF_TEXT);
-      else
-        mState.mMidiOutDev.Set(OFF_TEXT);
       return false;
     }
   };
@@ -787,9 +823,9 @@ bool IPlugAPPHost::SelectMIDIDevice(ERoute direction, const char* pPortName)
   {
     if(port == -1)
     {
-      mState.mMidiInDev.Set(OFF_TEXT);
-      UpdateINI();
-      port = 0;
+      if (mMidiIn)
+        mMidiIn->closePort();
+      return false;
     }
 
     //TODO: send all notes off?
@@ -804,7 +840,14 @@ bool IPlugAPPHost::SelectMIDIDevice(ERoute direction, const char* pPortName)
   #if defined OS_WIN
       else
       {
-        return openOrTurnOff([&] { mMidiIn->openPort(port-1); });
+        const bool opened = openOrTurnOff([&] { mMidiIn->openPort(port-1); });
+        if (opened && port - 1 < static_cast<int>(mMidiInputPortNames.size())
+            && strcmp(mState.mMidiInDev.Get(), mMidiInputPortNames[port - 1].c_str()))
+        {
+          mState.mMidiInDev.Set(mMidiInputPortNames[port - 1].c_str());
+          UpdateINI();
+        }
+        return opened;
       }
   #elif defined OS_MAC
       else if(port == 1)
@@ -826,9 +869,9 @@ bool IPlugAPPHost::SelectMIDIDevice(ERoute direction, const char* pPortName)
   {
     if(port == -1)
     {
-      mState.mMidiOutDev.Set(OFF_TEXT);
-      UpdateINI();
-      port = 0;
+      if (mMidiOut)
+        mMidiOut->closePort();
+      return false;
     }
     
     if (mMidiOut)
@@ -841,7 +884,14 @@ bool IPlugAPPHost::SelectMIDIDevice(ERoute direction, const char* pPortName)
 #if defined OS_WIN
       else
       {
-        return openOrTurnOff([&] { mMidiOut->openPort(port-1); });
+        const bool opened = openOrTurnOff([&] { mMidiOut->openPort(port-1); });
+        if (opened && port - 1 < static_cast<int>(mMidiOutputPortNames.size())
+            && strcmp(mState.mMidiOutDev.Get(), mMidiOutputPortNames[port - 1].c_str()))
+        {
+          mState.mMidiOutDev.Set(mMidiOutputPortNames[port - 1].c_str());
+          UpdateINI();
+        }
+        return opened;
       }
 #elif defined OS_MAC
       else if(port == 1)
@@ -967,6 +1017,13 @@ bool IPlugAPPHost::InitAudio(uint32_t inId, uint32_t outId, uint32_t sr, uint32_
   const int wantInL  = devInChans  > 0 ? clamp1Based(mState.mAudioInChanL,  devInChans)  : 1;
   const int wantOutL = devOutChans > 0 ? clamp1Based(mState.mAudioOutChanL, devOutChans) : 1;
   const int wantOutR = devOutChans > 0 ? clamp1Based(mState.mAudioOutChanR, devOutChans) : 1;
+  const bool channelsCorrected = mState.mAudioInChanL != static_cast<uint32_t>(wantInL)
+                              || mState.mAudioOutChanL != static_cast<uint32_t>(wantOutL)
+                              || mState.mAudioOutChanR != static_cast<uint32_t>(wantOutR);
+  mState.mAudioInChanL = wantInL;
+  mState.mAudioInChanR = wantInL;
+  mState.mAudioOutChanL = wantOutL;
+  mState.mAudioOutChanR = wantOutR;
 
   int neededIn  = std::max(pluginIns,  wantInL);
   int neededOut = std::max({pluginOuts, wantOutL, wantOutR});
@@ -1079,10 +1136,10 @@ bool IPlugAPPHost::InitAudio(uint32_t inId, uint32_t outId, uint32_t sr, uint32_
     // Preferences and settings.ini kept advertising the refused request: the dialog
     // read 128 while the callback ran 64, and every reopen asked for 128 again.
     //
-    // Only adopt sizes the dialog can represent exactly. The combo rounds anything
-    // else up (NormalizeAPPBufferSize), which would swap a truthful request for a
-    // size the driver never offered.
-    if (mBufferSize != iovs && NormalizeAPPBufferSize(mBufferSize) == mBufferSize)
+    // Preferences includes a negotiated nonstandard size as a one-off choice, so
+    // the state and next launch can describe the stream truthfully.
+    const bool bufferCorrected = mBufferSize != iovs;
+    if (bufferCorrected)
       mState.mBufferSize = mBufferSize;
 
     // VoLum: opening the stream can make the driver report a rate change or ask for a
@@ -1094,13 +1151,21 @@ bool IPlugAPPHost::InitAudio(uint32_t inId, uint32_t outId, uint32_t sr, uint32_
     mActiveState = mState;
     mHaveWorkingAudioState = true;
 
-    // Persist a rate the device corrected, either before the open or during it.
-    // Otherwise settings.ini keeps naming a rate that cannot be opened and every
-    // launch repeats the correction - and, at startup, silently.
-    if (mState.mAudioSR != requestedSR)
+    // Persist values corrected by the device. Otherwise Preferences and the next
+    // launch keep asking for a configuration that is not actually running.
+    if ((mState.mAudioSR != requestedSR || channelsCorrected || bufferCorrected)
+        && !mSuppressAudioStatePersistence)
     {
-      mSubstitutedFromSR = requestedSR;
-      mSubstitutedToSR = mState.mAudioSR;
+      if (mState.mAudioSR != requestedSR)
+      {
+        mSubstitutedFromSR = requestedSR;
+        mSubstitutedToSR = mState.mAudioSR;
+      }
+      else
+      {
+        mSubstitutedFromSR = 0;
+        mSubstitutedToSR = 0;
+      }
       UpdateINI();
     }
     else
@@ -1144,7 +1209,10 @@ bool IPlugAPPHost::InitMidi()
   }
 
   mMidiIn->setCallback(&MIDICallback, this);
-  mMidiIn->ignoreTypes(false, true, false );
+  // VoLum consumes only Program Change and its configured recall CC. Drop
+  // SysEx, timing and Active Sensing in RtMidi before they can contend for the
+  // callback or the host's 32-entry short-message queue.
+  mMidiIn->ignoreTypes(true, true, true);
 
   return true;
 }
@@ -1223,15 +1291,22 @@ int IPlugAPPHost::AudioCallback(void* pOutputBuffer, void* pInputBuffer, uint32_
       if (_this->mAudioVectorAccumulator.HasOutput())
       {
         const int readIdx = _this->mAudioVectorAccumulator.GetOutputReadIndex();
+        const double left = pluginOuts >= 1
+          ? _this->mAudioVectorAccumulator.GetOutputChannel(0)[readIdx]
+          : 0.0;
+        const double right = pluginOuts >= 2
+          ? _this->mAudioVectorAccumulator.GetOutputChannel(1)[readIdx]
+          : 0.0;
+        const auto stereo = VoLumRouteStereoSample(left, right, pluginOuts >= 2 && outOffsetL == outOffsetR);
         if (pluginOuts >= 1)
         {
           const int devCh = (outOffsetL < devOuts) ? outOffsetL : 0;
-          pOutputBufferD[devCh * nFrames + i] = _this->mAudioVectorAccumulator.GetOutputChannel(0)[readIdx] * APP_MULT;
+          pOutputBufferD[devCh * nFrames + i] = stereo.left * APP_MULT;
         }
-        if (pluginOuts >= 2)
+        if (pluginOuts >= 2 && !stereo.shared)
         {
           const int devCh = (outOffsetR < devOuts) ? outOffsetR : ((outOffsetL + 1 < devOuts) ? outOffsetL + 1 : outOffsetL);
-          pOutputBufferD[devCh * nFrames + i] = _this->mAudioVectorAccumulator.GetOutputChannel(1)[readIdx] * APP_MULT;
+          pOutputBufferD[devCh * nFrames + i] = stereo.right * APP_MULT;
         }
         for (int c = 2; c < pluginOuts; c++)
         {
@@ -1285,6 +1360,9 @@ void IPlugAPPHost::MIDICallback(double deltatime, std::vector<uint8_t>* pMsg, vo
   IPlugAPPHost* _this = (IPlugAPPHost*) pUserData;
   
   if (pMsg->size() == 0 || _this->mExiting)
+    return;
+
+  if (!VoLumStandaloneAcceptsMidiStatus(pMsg->at(0)))
     return;
   
   if (pMsg->size() > 3)

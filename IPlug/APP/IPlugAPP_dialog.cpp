@@ -227,12 +227,15 @@ void IPlugAPPHost::PopulateAudioDialogs(HWND hwndDlg)
 
 //  Populate buffer size combobox
   SendDlgItemMessage(hwndDlg,IDC_COMBO_AUDIO_BUF_SIZE,CB_RESETCONTENT,0,0);
-  for (int i = 0; i< kNumBufferSizeOptions; i++)
+  const auto bufferChoices = VoLumBufferSizeChoices(mState.mBufferSize);
+  for (std::size_t i = 0; i < bufferChoices.size(); ++i)
   {
-    SendDlgItemMessage(hwndDlg,IDC_COMBO_AUDIO_BUF_SIZE,CB_ADDSTRING,0,(LPARAM)kBufferSizeOptions[i].c_str());
+    WDL_String choice;
+    choice.SetFormatted(32, "%u", bufferChoices[i]);
+    const LRESULT idx = SendDlgItemMessage(hwndDlg,IDC_COMBO_AUDIO_BUF_SIZE,CB_ADDSTRING,0,(LPARAM)choice.Get());
+    SendDlgItemMessage(hwndDlg,IDC_COMBO_AUDIO_BUF_SIZE,CB_SETITEMDATA,idx,(LPARAM)bufferChoices[i]);
   }
   
-  mState.mBufferSize = NormalizeAPPBufferSize(mState.mBufferSize);
   WDL_String str;
   str.SetFormatted(32, "%i", mState.mBufferSize);
 
@@ -246,20 +249,15 @@ bool IPlugAPPHost::PopulateMidiDialogs(HWND hwndDlg)
     return false;
   else
   {
+    SendDlgItemMessage(hwndDlg,IDC_COMBO_MIDI_IN_DEV,CB_RESETCONTENT,0,0);
     for (int i=0; i<mMidiInputDevNames.size(); i++ )
     {
       SendDlgItemMessage(hwndDlg,IDC_COMBO_MIDI_IN_DEV,CB_ADDSTRING,0,(LPARAM)mMidiInputDevNames[i].c_str());
     }
 
-    LRESULT indevidx = SendDlgItemMessage(hwndDlg,IDC_COMBO_MIDI_IN_DEV,CB_FINDSTRINGEXACT, -1, (LPARAM)mState.mMidiInDev.Get());
-
-    // if the midi port name wasn't found update the ini file, and set to off
-    if(indevidx == -1)
-    {
-      mState.mMidiInDev.Set("off");
-      UpdateINI();
+    LRESULT indevidx = GetMIDIPortNumber(ERoute::kInput, mState.mMidiInDev.Get());
+    if (indevidx == -1)
       indevidx = 0;
-    }
 
     SendDlgItemMessage(hwndDlg,IDC_COMBO_MIDI_IN_DEV,CB_SETCURSEL, indevidx, 0);
 
@@ -269,20 +267,15 @@ bool IPlugAPPHost::PopulateMidiDialogs(HWND hwndDlg)
     if (!GetDlgItem(hwndDlg, IDC_COMBO_MIDI_OUT_DEV))
       return true;
 
+    SendDlgItemMessage(hwndDlg,IDC_COMBO_MIDI_OUT_DEV,CB_RESETCONTENT,0,0);
     for (int i=0; i<mMidiOutputDevNames.size(); i++ )
     {
       SendDlgItemMessage(hwndDlg,IDC_COMBO_MIDI_OUT_DEV,CB_ADDSTRING,0,(LPARAM)mMidiOutputDevNames[i].c_str());
     }
 
-    LRESULT outdevidx = SendDlgItemMessage(hwndDlg,IDC_COMBO_MIDI_OUT_DEV,CB_FINDSTRINGEXACT, -1, (LPARAM)mState.mMidiOutDev.Get());
-
-    // if the midi port name wasn't found update the ini file, and set to off
-    if(outdevidx == -1)
-    {
-      mState.mMidiOutDev.Set("off");
-      UpdateINI();
+    LRESULT outdevidx = GetMIDIPortNumber(ERoute::kOutput, mState.mMidiOutDev.Get());
+    if (outdevidx == -1)
       outdevidx = 0;
-    }
 
     SendDlgItemMessage(hwndDlg,IDC_COMBO_MIDI_OUT_DEV,CB_SETCURSEL, outdevidx, 0);
 
@@ -389,8 +382,10 @@ WDL_DLGRET IPlugAPPHost::PreferencesDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wPar
       VoLumApplyDarkCaption(hwndDlg);
       VoLumPrefsSkinAttach(hwndDlg, gHINSTANCE, JOSEFINSANS_FN, JOSEFINSANS_BOLD_HEAVY_FN);
 #endif
-      _this->PopulatePreferencesDialog(hwndDlg);
       mTempState = mState;
+      // MIDI devices can appear and disappear while VoLum is running.
+      _this->ProbeMidiIO();
+      _this->PopulatePreferencesDialog(hwndDlg);
       
       return TRUE;
 
@@ -405,9 +400,11 @@ WDL_DLGRET IPlugAPPHost::PreferencesDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wPar
       switch (LOWORD(wParam))
       {
         case IDOK:
-          if(mActiveState != mState)
+          if (VoLumDialogNeedsAudioRestart(
+                _this->AudioSettingsInStateAreEqual(mTempState, mState)
+                || _this->AudioSettingsInStateAreEqual(mActiveState, mState)))
           {
-            _this->TryToChangeAudio();
+            _this->TryToChangeAudio(true);
             ReportSampleRateSubstitution(hwndDlg, _this);
           }
 
@@ -415,28 +412,35 @@ WDL_DLGRET IPlugAPPHost::PreferencesDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wPar
           EndDialog(hwndDlg, IDOK); // INI file will be changed see MainDialogProc
           break;
         case IDAPPLY:
-          _this->TryToChangeAudio();
+          _this->TryToChangeAudio(true);
           // VoLum: the driver has the last word on the sample rate, so show what it
           // actually opened at rather than leaving the requested rate on screen.
           _this->PopulateAudioDialogs(hwndDlg);
           ReportSampleRateSubstitution(hwndDlg, _this);
           break;
         case IDCANCEL:
+        {
+          const bool audioNeedsRestart = VoLumDialogNeedsAudioRestart(
+            _this->AudioSettingsInStateAreEqual(mState, mTempState));
+          const bool midiChanged = !_this->MIDISettingsInStateAreEqual(mState, mTempState);
           gPreferencesHWND = NULL;
           EndDialog(hwndDlg, IDCANCEL);
 
-          // if state has been changed reset to previous state, INI file won't be changed
-          if (!_this->AudioSettingsInStateAreEqual(mState, mTempState)
-              || !_this->MIDISettingsInStateAreEqual(mState, mTempState))
+          mState = mTempState;
+          if (audioNeedsRestart)
           {
-            mState = mTempState;
-
             _this->TryToChangeAudioDriverType();
             _this->ProbeAudioIO();
             _this->TryToChangeAudio();
           }
+          if (midiChanged)
+          {
+            _this->SelectMIDIDevice(ERoute::kInput, mState.mMidiInDev.Get());
+            _this->SelectMIDIDevice(ERoute::kOutput, mState.mMidiOutDev.Get());
+          }
 
           break;
+        }
 
         case IDC_COMBO_AUDIO_DRIVER:
           if (HIWORD(wParam) == CBN_SELCHANGE)
@@ -552,7 +556,8 @@ WDL_DLGRET IPlugAPPHost::PreferencesDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wPar
           if (HIWORD(wParam) == CBN_SELCHANGE)
           {
             int iovsidx = (int) SendDlgItemMessage(hwndDlg, IDC_COMBO_AUDIO_BUF_SIZE, CB_GETCURSEL, 0, 0);
-            mState.mBufferSize = atoi(kBufferSizeOptions[iovsidx].c_str());
+            mState.mBufferSize = static_cast<uint32_t>(
+              SendDlgItemMessage(hwndDlg, IDC_COMBO_AUDIO_BUF_SIZE, CB_GETITEMDATA, iovsidx, 0));
           }
           break;
         case IDC_COMBO_AUDIO_SR:

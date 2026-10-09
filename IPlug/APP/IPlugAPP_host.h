@@ -42,6 +42,7 @@
 #include "IPlugConstants.h"
 
 #include "IPlugAPP.h"
+#include "VoLumIPlugAPPHostPolicy.h"
 #include "VoLumIPlugAPPVectorAccumulator.h"
 
 #include "config.h"
@@ -214,12 +215,12 @@ public:
   bool InitMidi();
   void CloseAudio();
   bool InitAudio(uint32_t inId, uint32_t outId, uint32_t sr, uint32_t iovs);
-  bool AudioSettingsInStateAreEqual(AppState& os, AppState& ns);
-  bool MIDISettingsInStateAreEqual(AppState& os, AppState& ns);
+  bool AudioSettingsInStateAreEqual(const AppState& os, const AppState& ns);
+  bool MIDISettingsInStateAreEqual(const AppState& os, const AppState& ns);
   bool RestoreActiveAudioStateAfterFailure(const char* message);
 
   bool TryToChangeAudioDriverType();
-  bool TryToChangeAudio();
+  bool TryToChangeAudio(bool explicitUserChange = false);
   bool SelectMIDIDevice(ERoute direction, const char* portName);
 
   /** VoLum: polled from the main window's timer, once the window exists.
@@ -335,6 +336,7 @@ private:
 
   /** VoLum: brake on the driver-follow logic in PollAudioStatus. */
   bool mFollowDriverChanges = true;
+  bool mSuppressAudioStatePersistence = false;
   int mAutoReopenCount = 0;
   std::chrono::steady_clock::time_point mLastAutoReopen = std::chrono::steady_clock::now();
   
@@ -343,6 +345,8 @@ private:
   std::vector<std::string> mAudioIDDevNames;
   std::vector<std::string> mMidiInputDevNames;
   std::vector<std::string> mMidiOutputDevNames;
+  std::vector<std::string> mMidiInputPortNames;
+  std::vector<std::string> mMidiOutputPortNames;
   
   WDL_PtrList<double> mInputBufPtrs;
   WDL_PtrList<double> mOutputBufPtrs;
