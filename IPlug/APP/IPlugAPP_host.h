@@ -95,6 +95,8 @@ public:
     uint32_t mBufferSize;
     uint32_t mMidiInChan;
     uint32_t mMidiOutChan;
+    bool mMidiInDevNameIsStable;
+    bool mMidiOutDevNameIsStable;
     
     uint32_t mAudioInChanL;
     uint32_t mAudioInChanR;
@@ -111,6 +113,8 @@ public:
     , mAudioSR(44100)
     , mMidiInChan(0)
     , mMidiOutChan(0)
+    , mMidiInDevNameIsStable(false)
+    , mMidiOutDevNameIsStable(false)
     
     , mAudioInChanL(1)
     , mAudioInChanR(2)
@@ -129,6 +133,8 @@ public:
     , mAudioSR(obj.mAudioSR)
     , mMidiInChan(obj.mMidiInChan)
     , mMidiOutChan(obj.mMidiOutChan)
+    , mMidiInDevNameIsStable(obj.mMidiInDevNameIsStable)
+    , mMidiOutDevNameIsStable(obj.mMidiOutDevNameIsStable)
     
     , mAudioInChanL(obj.mAudioInChanL)
     , mAudioInChanR(obj.mAudioInChanR)
@@ -143,6 +149,8 @@ public:
               rhs.mAudioSR == mAudioSR &&
               rhs.mMidiInChan == mMidiInChan &&
               rhs.mMidiOutChan == mMidiOutChan &&
+              rhs.mMidiInDevNameIsStable == mMidiInDevNameIsStable &&
+              rhs.mMidiOutDevNameIsStable == mMidiOutDevNameIsStable &&
               (strcmp(rhs.mAudioInDev.Get(), mAudioInDev.Get()) == 0) &&
               (strcmp(rhs.mAudioOutDev.Get(), mAudioOutDev.Get()) == 0) &&
               (strcmp(rhs.mMidiInDev.Get(), mMidiInDev.Get()) == 0) &&
@@ -193,11 +201,12 @@ public:
   /** @param direction Either kInput or kOutput
    * @param name The name of the midi device
    * @return An integer specifying the output port number, where 0 means any */
-  int GetMIDIPortNumber(ERoute direction, const char* name) const;
+  int GetMIDIPortNumber(ERoute direction, const char* name, bool nameIsStable) const;
   
   /** find out which devices have input channels & which have output channels, add their ids to the lists */
   void ProbeAudioIO();
   void ProbeMidiIO();
+  void ReconcileStoredMidiSettings();
   bool InitMidi();
   void CloseAudio();
   bool InitAudio(uint32_t inId, uint32_t outId, uint32_t sr, uint32_t iovs);
@@ -207,7 +216,7 @@ public:
 
   bool TryToChangeAudioDriverType();
   bool TryToChangeAudio(bool explicitUserChange = false);
-  bool SelectMIDIDevice(ERoute direction, const char* portName);
+  bool SelectMIDIDevice(ERoute direction, const char* portName, bool nameIsStable);
 
   /** VoLum: polled from the main window's timer, once the window exists.
    *
@@ -264,7 +273,8 @@ private:
   std::unique_ptr<RtMidiOut> mMidiOut = nullptr;
   int mMidiOutChannel = -1;
   int mMidiInChannel = -1;
-  uint32_t mMidiNameVersion = 0;
+  WDL_String mLegacyMidiInDev;
+  WDL_String mLegacyMidiOutDev;
   
   /**  */
   AppState mState;
@@ -272,6 +282,7 @@ private:
   AppState mTempState;
   /** When the audio driver is started the current state is copied here so that if OK is pressed after APPLY nothing is changed */
   AppState mActiveState;
+  AppState mRuntimeFallbackRequestedState;
   
   double mSampleRate = 44100.;
   uint32_t mSamplesElapsed = 0;
@@ -313,6 +324,7 @@ private:
    * audio settings. See RestoreActiveAudioStateAfterFailure. */
   bool mHaveWorkingAudioState = false;
   bool mActiveAudioIsRuntimeFallback = false;
+  bool mHaveRuntimeFallbackRequestedState = false;
 
   /** VoLum: the last time a stream opened at a rate other than the one asked for,
    * so Preferences can say so. Showing the driver's rate is truthful but on its own
@@ -335,6 +347,8 @@ private:
   std::vector<std::string> mMidiOutputDevNames;
   std::vector<std::string> mMidiInputPortNames;
   std::vector<std::string> mMidiOutputPortNames;
+  std::vector<std::string> mMidiInputLegacyPortNames;
+  std::vector<std::string> mMidiOutputLegacyPortNames;
   
   WDL_PtrList<double> mInputBufPtrs;
   WDL_PtrList<double> mOutputBufPtrs;

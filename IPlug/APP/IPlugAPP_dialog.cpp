@@ -256,7 +256,7 @@ bool IPlugAPPHost::PopulateMidiDialogs(HWND hwndDlg)
       SendDlgItemMessage(hwndDlg,IDC_COMBO_MIDI_IN_DEV,CB_ADDSTRING,0,(LPARAM)mMidiInputDevNames[i].c_str());
     }
 
-    LRESULT indevidx = GetMIDIPortNumber(ERoute::kInput, mState.mMidiInDev.Get());
+    LRESULT indevidx = GetMIDIPortNumber(ERoute::kInput, mState.mMidiInDev.Get(), mState.mMidiInDevNameIsStable);
     if (indevidx == -1)
       indevidx = 0;
 
@@ -274,7 +274,7 @@ bool IPlugAPPHost::PopulateMidiDialogs(HWND hwndDlg)
       SendDlgItemMessage(hwndDlg,IDC_COMBO_MIDI_OUT_DEV,CB_ADDSTRING,0,(LPARAM)mMidiOutputDevNames[i].c_str());
     }
 
-    LRESULT outdevidx = GetMIDIPortNumber(ERoute::kOutput, mState.mMidiOutDev.Get());
+    LRESULT outdevidx = GetMIDIPortNumber(ERoute::kOutput, mState.mMidiOutDev.Get(), mState.mMidiOutDevNameIsStable);
     if (outdevidx == -1)
       outdevidx = 0;
 
@@ -415,9 +415,9 @@ WDL_DLGRET IPlugAPPHost::PreferencesDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wPar
             _this->TryToChangeAudio(true);
             ReportSampleRateSubstitution(hwndDlg, _this);
           }
-          if (_this->GetMIDIPortNumber(ERoute::kInput, mState.mMidiInDev.Get()) > 0
+          if (_this->GetMIDIPortNumber(ERoute::kInput, mState.mMidiInDev.Get(), mState.mMidiInDevNameIsStable) > 0
               && _this->mMidiIn && !_this->mMidiIn->isPortOpen())
-            _this->SelectMIDIDevice(ERoute::kInput, mState.mMidiInDev.Get());
+            _this->SelectMIDIDevice(ERoute::kInput, mState.mMidiInDev.Get(), mState.mMidiInDevNameIsStable);
 
           gPreferencesHWND = NULL;
           gAudioAppliedInPreferences = false;
@@ -453,8 +453,8 @@ WDL_DLGRET IPlugAPPHost::PreferencesDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wPar
           }
           if (midiChanged)
           {
-            _this->SelectMIDIDevice(ERoute::kInput, mState.mMidiInDev.Get());
-            _this->SelectMIDIDevice(ERoute::kOutput, mState.mMidiOutDev.Get());
+            _this->SelectMIDIDevice(ERoute::kInput, mState.mMidiInDev.Get(), mState.mMidiInDevNameIsStable);
+            _this->SelectMIDIDevice(ERoute::kOutput, mState.mMidiOutDev.Get(), mState.mMidiOutDevNameIsStable);
           }
 
           break;
@@ -614,7 +614,7 @@ WDL_DLGRET IPlugAPPHost::PreferencesDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wPar
           {
             int idx = (int) SendDlgItemMessage(hwndDlg, IDC_COMBO_MIDI_IN_DEV, CB_GETCURSEL, 0, 0);
             getComboString(mState.mMidiInDev, IDC_COMBO_MIDI_IN_DEV, idx);
-            _this->SelectMIDIDevice(ERoute::kInput, mState.mMidiInDev.Get());
+            _this->SelectMIDIDevice(ERoute::kInput, mState.mMidiInDev.Get(), true);
           }
           break;
 
@@ -623,7 +623,7 @@ WDL_DLGRET IPlugAPPHost::PreferencesDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wPar
           {
             int idx = (int) SendDlgItemMessage(hwndDlg, IDC_COMBO_MIDI_OUT_DEV, CB_GETCURSEL, 0, 0);
             getComboString(mState.mMidiOutDev, IDC_COMBO_MIDI_OUT_DEV, idx);
-            _this->SelectMIDIDevice(ERoute::kOutput, mState.mMidiOutDev.Get());
+            _this->SelectMIDIDevice(ERoute::kOutput, mState.mMidiOutDev.Get(), true);
           }
           break;
 

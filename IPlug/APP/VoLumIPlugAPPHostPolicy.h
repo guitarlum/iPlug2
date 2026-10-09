@@ -81,6 +81,78 @@ inline int VoLumResolveMidiPort(const std::string& savedName, const std::vector<
   return match;
 }
 
+inline bool VoLumStableMidiNameHasOrdinal(const std::string& name)
+{
+  const auto ordinal = name.rfind(" [");
+  if (ordinal == std::string::npos || name.back() != ']')
+    return false;
+
+  if (ordinal + 2 == name.size() - 1)
+    return false;
+
+  for (std::size_t i = ordinal + 2; i + 1 < name.size(); ++i)
+    if (!std::isdigit(static_cast<unsigned char>(name[i])))
+      return false;
+  return true;
+}
+
+inline std::string VoLumLegacyMidiNameForStable(const std::string& stableName, const std::vector<std::string>& stableNames, const std::vector<std::string>& legacyNames, const std::string& fallback)
+{
+  if (stableName == "off")
+    return stableName;
+
+  const auto stable = std::find(stableNames.begin(), stableNames.end(), stableName);
+  if (stable == stableNames.end())
+    return fallback;
+
+  const auto index = static_cast<std::size_t>(std::distance(stableNames.begin(), stable));
+  if (VoLumStableMidiNameHasOrdinal(stableName) || index >= legacyNames.size())
+    return "off";
+  return legacyNames[index];
+}
+
+struct VoLumStoredMidiNamePlan
+{
+  std::string selectedName;
+  bool nameIsStable = false;
+  bool changed = false;
+};
+
+inline VoLumStoredMidiNamePlan VoLumReconcileStoredMidiName(
+  const std::string& legacyName, const std::string& stableName, const std::vector<std::string>& stableNames, const std::vector<std::string>& legacyNames, bool winMM)
+{
+  if (stableName.empty())
+    return {legacyName, false, false};
+
+  if (stableName == "off")
+    return legacyName == "off" ? VoLumStoredMidiNamePlan{stableName, true, false} : VoLumStoredMidiNamePlan{legacyName, false, true};
+
+  const auto stable = std::find(stableNames.begin(), stableNames.end(), stableName);
+  if (stable == stableNames.end())
+    return {stableName, true, false};
+
+  const std::string expectedLegacy = VoLumLegacyMidiNameForStable(stableName, stableNames, legacyNames, legacyName);
+  if (legacyName == expectedLegacy)
+    return {stableName, true, false};
+
+  if (legacyName == "off")
+    return {legacyName, true, true};
+
+  const auto exactLegacy = std::find(legacyNames.begin(), legacyNames.end(), legacyName);
+  if (exactLegacy != legacyNames.end())
+  {
+    const auto index = static_cast<std::size_t>(std::distance(legacyNames.begin(), exactLegacy));
+    if (index < stableNames.size())
+      return {stableNames[index], true, true};
+  }
+
+  const int migrated = VoLumResolveMidiPort(legacyName, stableNames, winMM, false);
+  if (migrated >= 0)
+    return {stableNames[static_cast<std::size_t>(migrated)], true, true};
+
+  return {stableName, true, false};
+}
+
 inline bool VoLumStandaloneAcceptsMidiStatus(uint8_t status)
 {
   const uint8_t kind = status & 0xF0;
@@ -118,12 +190,13 @@ struct VoLumFailureRestorePlan
 {
   bool restoreActiveState = false;
   bool persistActiveState = false;
+  bool restoreSavedFallbackRequest = false;
 };
 
 inline VoLumFailureRestorePlan VoLumPlanFailureRestore(bool haveWorkingState, bool stateEqualsActive, bool activeIsRuntimeFallback)
 {
   const bool restore = haveWorkingState && !stateEqualsActive;
-  return {restore, restore && !activeIsRuntimeFallback};
+  return {restore, restore && !activeIsRuntimeFallback, restore && activeIsRuntimeFallback};
 }
 
 inline uint32_t VoLumClampStoredBufferSize(int storedSize) { return static_cast<uint32_t>(std::clamp(storedSize, 48, 8192)); }
