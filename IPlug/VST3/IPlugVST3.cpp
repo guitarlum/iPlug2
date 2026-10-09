@@ -111,6 +111,7 @@ tresult PLUGIN_API IPlugVST3::setState(IBStream* pState)
 {
   TRACE
   
+  ArmProgramRestoreGuard();
   return IPlugVST3State::SetState(this, pState) ? kResultOk :kResultFalse;
 }
 
@@ -168,10 +169,10 @@ tresult PLUGIN_API IPlugVST3::setComponentState(IBStream* pState)
 
 tresult PLUGIN_API IPlugVST3::getMidiControllerAssignment(int32 busIndex, int16 midiChannel, CtrlNumber midiCCNumber, ParamID& tag)
 {
-  if (busIndex == 0 && midiChannel < VST3_NUM_CC_CHANS)
+  // Controllers past kCtrlProgramChange would alias into the next channel's block.
+  if (busIndex == 0 && midiChannel >= 0 && midiChannel < VST3_NUM_CC_CHANS && midiCCNumber >= 0 && midiCCNumber <= kCtrlProgramChange)
   {
-    // Stride is kCountCtrlNumber + 1 so kCtrlProgramChange (130) occupies the slot after Pitch Bend.
-    tag = kMIDICCParamStartIdx + (midiChannel * (kCountCtrlNumber + 1)) + midiCCNumber;
+    tag = kMIDICCParamStartIdx + (midiChannel * kVST3MIDIParamsPerChannel) + midiCCNumber;
     return kResultTrue;
   }
 

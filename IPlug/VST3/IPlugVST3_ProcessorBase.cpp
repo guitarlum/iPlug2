@@ -13,10 +13,13 @@
 #include "pluginterfaces/vst/ivstmidicontrollers.h"
 #include "public.sdk/source/vst/vsteventshelper.h"
 #include "IPlugVST3_ProcessorBase.h"
+#include "IPlugVST3_MidiParams.h"
 
 using namespace iplug;
 using namespace Steinberg;
 using namespace Vst;
+
+static_assert(kVST3MIDIParamsPerChannel == kCountCtrlNumber + 1, "per-channel MIDI parameter block must end at kCtrlProgramChange");
 
 #ifndef CUSTOM_BUSTYPE_FUNC
 uint64_t iplug::GetAPIBusTypeForChannelIOConfig(int configIdx, ERoute dir, int busIdx, const IOConfig* pConfig, WDL_TypedBuf<uint64_t>* APIBusTypes)
@@ -273,78 +276,33 @@ void IPlugVST3ProcessorBase::PrepareProcessContext(ProcessData& data, ProcessSet
 
 void IPlugVST3ProcessorBase::ProcessParameterChanges(ProcessData& data, IPlugQueue<IMidiMsg>& fromProcessor)
 {
-  IParameterChanges* paramChanges = data.inputParameterChanges;
-  
-  if (paramChanges)
-  {
-    int32 numParamsChanged = paramChanges->getParameterCount();
-    
-    for (int32 i = 0; i < numParamsChanged; i++)
-    {
-      IParamValueQueue* paramQueue = paramChanges->getParameterData(i);
-      if (paramQueue)
+  mMidiParamRouter.ProcessParameterChanges(data, GetRenderingOffline(), VST3MidiParamRouter::NowNs(),
+    [&](int idx, double value, int32 offsetSamples) {
+      if (idx == kBypassParam)
       {
-        int32 numPoints = paramQueue->getPointCount();
-        int32 offsetSamples;
-        double value;
-        
-        if (paramQueue->getPoint(numPoints - 1,  offsetSamples, value) == kResultTrue)
-        {
-          int idx = paramQueue->getParameterId();
-          
-          switch (idx)
-          {
-            case kBypassParam:
-            {
-              const bool bypassed = (value > 0.5);
+        const bool bypassed = (value > 0.5);
 
-              if (bypassed != GetBypassed())
-                SetBypassed(bypassed);
-
-              break;
-            }
-            default:
-            {
-              if (idx >= 0 && idx < mPlug.NParams())
-              {
-#ifdef PARAMS_MUTEX
-                mPlug.mParams_mutex.Enter();
-#endif
-                mPlug.GetParam(idx)->SetNormalized(value);
-              
-                // In VST3 non distributed the same parameter value is also set via IPlugVST3Controller::setParamNormalized(ParamID tag, ParamValue value)
-                mPlug.OnParamChange(idx, kHost, offsetSamples);
-#ifdef PARAMS_MUTEX
-                mPlug.mParams_mutex.Leave();
-#endif
-              }
-              else if (idx >= kMIDICCParamStartIdx)
-              {
-                int index = idx - kMIDICCParamStartIdx;
-                int channel = index / (kCountCtrlNumber + 1);
-                int ctrlr = index % (kCountCtrlNumber + 1);
-
-                IMidiMsg msg;
-
-                if (ctrlr == kAfterTouch)
-                  msg.MakeChannelATMsg((int) (value * 127.), offsetSamples, channel);
-                else if (ctrlr == kPitchBend)
-                  msg.MakePitchWheelMsg((value * 2.)-1., channel, offsetSamples);
-                else if (ctrlr == kCtrlProgramChange)
-                  msg.MakeProgramChange((int) (value * 127.), channel, offsetSamples);
-                else
-                  msg.MakeControlChangeMsg((IMidiMsg::EControlChangeMsg) ctrlr, value, channel, offsetSamples);
-
-                fromProcessor.Push(msg);
-                ProcessMidiMsg(msg);
-              }
-            }
-              break;
-          }
-        }
+        if (bypassed != GetBypassed())
+          SetBypassed(bypassed);
       }
-    }
-  }
+      else if (idx >= 0 && idx < mPlug.NParams())
+      {
+#ifdef PARAMS_MUTEX
+        mPlug.mParams_mutex.Enter();
+#endif
+        mPlug.GetParam(idx)->SetNormalized(value);
+      
+        // In VST3 non distributed the same parameter value is also set via IPlugVST3Controller::setParamNormalized(ParamID tag, ParamValue value)
+        mPlug.OnParamChange(idx, kHost, offsetSamples);
+#ifdef PARAMS_MUTEX
+        mPlug.mParams_mutex.Leave();
+#endif
+      }
+    },
+    [&](const IMidiMsg& msg) {
+      fromProcessor.Push(msg);
+      ProcessMidiMsg(msg);
+    });
 }
 
 void IPlugVST3ProcessorBase::ProcessAudio(ProcessData& data, ProcessSetup& setup, const BusList& ins, const BusList& outs)
@@ -432,6 +390,7 @@ void IPlugVST3ProcessorBase::Process(ProcessData& data, ProcessSetup& setup, con
   }
   
   ProcessAudio(data, setup, ins, outs);
+  mMidiParamRouter.EndBlock(data, setup.sampleRate);
   
   if (DoesMIDIOut())
   {

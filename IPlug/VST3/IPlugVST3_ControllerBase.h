@@ -22,6 +22,8 @@
 
 BEGIN_IPLUG_NAMESPACE
 
+static_assert(VST3_NUM_CC_CHANS <= kVST3MaxMIDIChannels, "VST3_NUM_CC_CHANS exceeds the MIDI channel count");
+
 /** Shared VST3 controller code */
 class IPlugVST3ControllerBase
 {
@@ -135,11 +137,15 @@ public:
       {
         chanGroupStr.SetFormatted(32, "CH%i", chan + 1);
 
+        // Each channel unit owns a program list whose parameter carries kIsProgramChange: hosts map
+        // a MIDI Program Change to it via getUnitByBus. They do not ask IMidiMapping for kCtrlProgramChange.
         unitInfo.id = unitID = pEditController->getUnitCount() + 1;
         unitInfo.parentUnitId = midiCCsUnitID;
-        unitInfo.programListId = Steinberg::Vst::kNoProgramListId;
+        unitInfo.programListId = kVST3MIDIProgramParamStartIdx + chan;
         unitNameSetter.fromAscii(chanGroupStr.Get());
         pEditController->addUnit(new Steinberg::Vst::Unit(unitInfo));
+        mMIDIProgramUnitIDs[chan] = unitID;
+        mParameters.addParameter(new IPlugVST3MIDIProgramParameter(chan, unitID));
         // add 128 MIDI CCs
         Steinberg::Vst::String128 paramName;
         for (int i = 0; i < 128; i++)
@@ -150,9 +156,11 @@ public:
 
         mParameters.addParameter(STR16("Channel Aftertouch"), STR16(""), 0, 0, 0, paramIdx++, unitID);
         mParameters.addParameter(STR16("Pitch Bend"), STR16(""), 0, 0.5, 0, paramIdx++, unitID);
-        // kCtrlProgramChange == kCountCtrlNumber (130). VST3 delivers it via IMidiMapping, not Event.
+        // kCtrlProgramChange == kCountCtrlNumber (130), for hosts that do map it through IMidiMapping.
         mParameters.addParameter(STR16("Program Change"), STR16(""), 0, 0, 0, paramIdx++, unitID);
       }
+
+      mNumMIDIProgramLists = VST3_NUM_CC_CHANS;
     }
 #endif
   }
@@ -165,16 +173,20 @@ public:
       return Steinberg::kResultTrue;
     }
 
+    if (VST3MIDIProgramParamChannel(listId, mNumMIDIProgramLists) >= 0 && programIndex >= 0 && programIndex < kVST3MIDIProgramCount)
+    {
+      WDL_String programName;
+      programName.SetFormatted(32, "Program %i", programIndex);
+      Steinberg::UString(name, 128).fromAscii(programName.Get());
+      return Steinberg::kResultTrue;
+    }
+
     return Steinberg::kResultFalse;
   }
   
   Steinberg::int32 PLUGIN_API GetProgramListCount(IPlugAPIBase* pPlug)
   {
-#ifdef VST3_PRESET_LIST
-    return (pPlug->NPresets() > 0);
-#else
-    return 0;
-#endif
+    return NumPresetProgramLists(pPlug) + mNumMIDIProgramLists;
   }
   
   Steinberg::tresult PLUGIN_API GetProgramListInfo(IPlugAPIBase* pPlug, Steinberg::int32 listIndex, Steinberg::Vst::ProgramListInfo& info)
@@ -189,6 +201,29 @@ public:
       return Steinberg::kResultTrue;
     }
 #endif
+
+    const int channel = listIndex - NumPresetProgramLists(pPlug);
+    if (channel >= 0 && channel < mNumMIDIProgramLists)
+    {
+      WDL_String listName;
+      listName.SetFormatted(32, "MIDI Program CH%i", channel + 1);
+      info.id = kVST3MIDIProgramParamStartIdx + channel;
+      info.programCount = kVST3MIDIProgramCount;
+      Steinberg::UString(info.name, 128).fromAscii(listName.Get());
+      return Steinberg::kResultTrue;
+    }
+
+    return Steinberg::kResultFalse;
+  }
+
+  /** Maps MIDI input channels to their channel unit, so hosts can deliver Program Change to its program list parameter. */
+  Steinberg::tresult PLUGIN_API GetUnitByBus(Steinberg::Vst::MediaType type, Steinberg::Vst::BusDirection dir, Steinberg::int32 busIndex, Steinberg::int32 channel, Steinberg::Vst::UnitID& unitId)
+  {
+    if (type == Steinberg::Vst::kEvent && dir == Steinberg::Vst::kInput && busIndex == 0 && channel >= 0 && channel < mNumMIDIProgramLists)
+    {
+      unitId = mMIDIProgramUnitIDs[channel];
+      return Steinberg::kResultTrue;
+    }
 
     return Steinberg::kResultFalse;
   }
@@ -348,6 +383,15 @@ public:
   }
   
 protected:
+
+  static int NumPresetProgramLists(IPlugAPIBase* pPlug)
+  {
+#ifdef VST3_PRESET_LIST
+    return (pPlug->NPresets() > 0);
+#else
+    return 0;
+#endif
+  }
   
   bool SetVST3ParamNormalized(Steinberg::Vst::ParamID tag, Steinberg::Vst::ParamValue value)
   {
@@ -363,6 +407,8 @@ protected:
 public:
   Steinberg::Vst::ParameterContainer& mParameters;
   IPlugVST3BypassParameter* mBypassParameter = nullptr;
+  int mNumMIDIProgramLists = 0;
+  Steinberg::Vst::UnitID mMIDIProgramUnitIDs[kVST3MaxMIDIChannels] = {};
 
   // ChannelContext::IInfoListener
   WDL_String mChannelName;
