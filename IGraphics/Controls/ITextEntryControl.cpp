@@ -15,8 +15,8 @@
 */
 
 #include "ITextEntryControl.h"
-#include "ITextEntryKeyFilter.h"
 #include "IPlugPlatform.h"
+#include "ITextEntryKeyFilter.h"
 #include "wdlutf8.h"
 #include <string>
 #include <codecvt>

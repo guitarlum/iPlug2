@@ -25,9 +25,6 @@ namespace igraphics
  * Maps the comma to '.', so the entry holds one spelling whichever key was pressed.
  * @param key The character the key press produced
  * @return The character to enter in its place */
-inline int NormalizeDecimalSeparatorKey(int key)
-{
-  return key == ',' ? '.' : key;
-}
+inline int NormalizeDecimalSeparatorKey(int key) { return key == ',' ? '.' : key; }
 } // namespace igraphics
 } // namespace iplug

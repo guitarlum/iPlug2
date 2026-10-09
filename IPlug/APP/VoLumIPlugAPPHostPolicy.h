@@ -227,8 +227,7 @@ inline std::string VoLumSampleRateNoticeText(bool asioDriver, uint32_t requested
            + std::to_string(actual) + " Hz instead, and " + app
            + " is now running at that rate. Sample rates on ASIO devices are usually set in the driver's own control "
              "panel - try Device Settings if you need a different one.";
-  return "The audio device does not offer " + std::to_string(requested) + " Hz in this driver.\n\n" + app
-         + " opened it at " + std::to_string(actual) + " Hz instead and is now running at that rate.";
+  return "The audio device does not offer " + std::to_string(requested) + " Hz in this driver.\n\n" + app + " opened it at " + std::to_string(actual) + " Hz instead and is now running at that rate.";
 }
 
 inline std::vector<uint32_t> VoLumBufferSizeChoices(uint32_t activeSize)
