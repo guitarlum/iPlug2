@@ -15,6 +15,7 @@
 */
 
 #include "ITextEntryControl.h"
+#include "ITextEntryKeyFilter.h"
 #include "IPlugPlatform.h"
 #include "wdlutf8.h"
 #include <string>
@@ -302,6 +303,7 @@ bool ITextEntryControl::OnKeyDown(float x, float y, const IKeyPress& key)
           }
           case IParam::kTypeDouble:
           {
+            stbKey = NormalizeDecimalSeparatorKey(stbKey);
             if (key.VK >= '0' && key.VK <= '9' && !key.S)
               break;
             if (key.VK >= kVK_NUMPAD0 && key.VK <= kVK_NUMPAD9)
