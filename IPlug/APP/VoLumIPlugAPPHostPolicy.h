@@ -50,16 +50,15 @@ inline std::vector<std::string> VoLumStableMidiPortNames(const std::vector<std::
   return stable;
 }
 
-inline int VoLumResolveMidiPort(const std::string& savedName,
-                               const std::vector<std::string>& stableNames,
-                               bool winMM)
+inline int VoLumResolveMidiPort(const std::string& savedName, const std::vector<std::string>& stableNames, bool winMM, bool stableNameVersion = false)
 {
-  const auto exact = std::find(stableNames.begin(), stableNames.end(), savedName);
-  if (exact != stableNames.end())
-    return static_cast<int>(std::distance(stableNames.begin(), exact));
-
-  if (!winMM)
+  if (!winMM || stableNameVersion)
+  {
+    const auto exact = std::find(stableNames.begin(), stableNames.end(), savedName);
+    if (exact != stableNames.end())
+      return static_cast<int>(std::distance(stableNames.begin(), exact));
     return -1;
+  }
 
   // Migration from RtMidi's former "<device name> <volatile global index>"
   // spelling is safe only when the base name is unique. Duplicate devices become
@@ -88,15 +87,46 @@ inline bool VoLumStandaloneAcceptsMidiStatus(uint8_t status)
   return kind == 0xB0 || kind == 0xC0;
 }
 
-inline bool VoLumDialogNeedsAudioRestart(bool audioSettingsEqual)
+struct VoLumDialogAudioPlan
 {
-  return !audioSettingsEqual;
+  bool restartOnOK = false;
+  bool restartOnCancel = false;
+};
+
+inline VoLumDialogAudioPlan VoLumPlanDialogAudio(bool activeEqualsCurrent, bool tempEqualsCurrent, bool activeEqualsTemp, bool appliedThisDialog)
+{
+  return {!activeEqualsCurrent && (!tempEqualsCurrent || appliedThisDialog), !activeEqualsTemp || !tempEqualsCurrent};
 }
 
-inline bool VoLumShouldPersistAudioFallback(bool explicitUserChange)
+struct VoLumProbeChannelPlan
 {
-  return explicitUserChange;
+  uint32_t runtimeChannel = 1;
+  uint32_t savedChannel = 1;
+  bool corrected = false;
+};
+
+inline VoLumProbeChannelPlan VoLumPlanProbeChannel(uint32_t savedChannel, int availableChannels)
+{
+  if (availableChannels <= 0)
+    return {1, savedChannel, false};
+
+  const uint32_t channel = std::clamp(savedChannel, 1u, static_cast<uint32_t>(availableChannels));
+  return {channel, channel, channel != savedChannel};
 }
+
+struct VoLumFailureRestorePlan
+{
+  bool restoreActiveState = false;
+  bool persistActiveState = false;
+};
+
+inline VoLumFailureRestorePlan VoLumPlanFailureRestore(bool haveWorkingState, bool stateEqualsActive, bool activeIsRuntimeFallback)
+{
+  const bool restore = haveWorkingState && !stateEqualsActive;
+  return {restore, restore && !activeIsRuntimeFallback};
+}
+
+inline uint32_t VoLumClampStoredBufferSize(int storedSize) { return static_cast<uint32_t>(std::clamp(storedSize, 48, 8192)); }
 
 struct VoLumStereoRoute
 {

@@ -33,6 +33,7 @@ static constexpr UINT_PTR kAudioStatusTimerID = 1001;
 // long as it is: reopening the stream underneath a dialog the user is editing would
 // fight them for the device, and the driver's pending rate keeps until the next tick.
 static HWND gPreferencesHWND = NULL;
+static bool gAudioAppliedInPreferences = false;
 
 #if !defined NO_IGRAPHICS
 #include "IGraphics.h"
@@ -358,10 +359,11 @@ WDL_DLGRET IPlugAPPHost::PreferencesDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wPar
   AppState& mActiveState = _this->mActiveState;
 
   auto getComboString = [&](WDL_String& str, int item, WPARAM idx) {
-    std::string tempString;
     long len = (long) SendDlgItemMessage(hwndDlg, item, CB_GETLBTEXTLEN, idx, 0) + 1;
-    tempString.reserve(len);
-    SendDlgItemMessage(hwndDlg, item, CB_GETLBTEXT, idx, (LPARAM) tempString.data());
+    std::string tempString(static_cast<std::size_t>(len), '\0');
+    const LRESULT copied = SendDlgItemMessage(hwndDlg, item, CB_GETLBTEXT, idx, (LPARAM) tempString.data());
+    if (copied >= 0)
+      tempString.resize(static_cast<std::size_t>(copied));
     str.Set(tempString.c_str());
   };
   
@@ -377,6 +379,7 @@ WDL_DLGRET IPlugAPPHost::PreferencesDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wPar
   {
     case WM_INITDIALOG:
       gPreferencesHWND = hwndDlg;
+      gAudioAppliedInPreferences = false;
 #ifdef OS_WIN
       // VoLum: before Populate - the skin rebuilds the combos it fills.
       VoLumApplyDarkCaption(hwndDlg);
@@ -391,6 +394,7 @@ WDL_DLGRET IPlugAPPHost::PreferencesDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wPar
 
     case WM_DESTROY:
       gPreferencesHWND = NULL;
+      gAudioAppliedInPreferences = false;
 #ifdef OS_WIN
       VoLumPrefsSkinDetach(hwndDlg);
 #endif
@@ -400,19 +404,29 @@ WDL_DLGRET IPlugAPPHost::PreferencesDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wPar
       switch (LOWORD(wParam))
       {
         case IDOK:
-          if (VoLumDialogNeedsAudioRestart(
-                _this->AudioSettingsInStateAreEqual(mTempState, mState)
-                || _this->AudioSettingsInStateAreEqual(mActiveState, mState)))
+        {
+          const auto audioPlan = VoLumPlanDialogAudio(
+            _this->AudioSettingsInStateAreEqual(mActiveState, mState),
+            _this->AudioSettingsInStateAreEqual(mTempState, mState),
+            _this->AudioSettingsInStateAreEqual(mActiveState, mTempState),
+            gAudioAppliedInPreferences);
+          if (audioPlan.restartOnOK)
           {
             _this->TryToChangeAudio(true);
             ReportSampleRateSubstitution(hwndDlg, _this);
           }
+          if (_this->GetMIDIPortNumber(ERoute::kInput, mState.mMidiInDev.Get()) > 0
+              && _this->mMidiIn && !_this->mMidiIn->isPortOpen())
+            _this->SelectMIDIDevice(ERoute::kInput, mState.mMidiInDev.Get());
 
           gPreferencesHWND = NULL;
+          gAudioAppliedInPreferences = false;
           EndDialog(hwndDlg, IDOK); // INI file will be changed see MainDialogProc
           break;
+        }
         case IDAPPLY:
           _this->TryToChangeAudio(true);
+          gAudioAppliedInPreferences = true;
           // VoLum: the driver has the last word on the sample rate, so show what it
           // actually opened at rather than leaving the requested rate on screen.
           _this->PopulateAudioDialogs(hwndDlg);
@@ -420,14 +434,18 @@ WDL_DLGRET IPlugAPPHost::PreferencesDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wPar
           break;
         case IDCANCEL:
         {
-          const bool audioNeedsRestart = VoLumDialogNeedsAudioRestart(
-            _this->AudioSettingsInStateAreEqual(mState, mTempState));
+          const auto audioPlan = VoLumPlanDialogAudio(
+            _this->AudioSettingsInStateAreEqual(mActiveState, mState),
+            _this->AudioSettingsInStateAreEqual(mTempState, mState),
+            _this->AudioSettingsInStateAreEqual(mActiveState, mTempState),
+            gAudioAppliedInPreferences);
           const bool midiChanged = !_this->MIDISettingsInStateAreEqual(mState, mTempState);
           gPreferencesHWND = NULL;
+          gAudioAppliedInPreferences = false;
           EndDialog(hwndDlg, IDCANCEL);
 
           mState = mTempState;
-          if (audioNeedsRestart)
+          if (audioPlan.restartOnCancel)
           {
             _this->TryToChangeAudioDriverType();
             _this->ProbeAudioIO();

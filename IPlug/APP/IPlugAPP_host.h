@@ -72,20 +72,6 @@ extern HINSTANCE gHINSTANCE;
 
 BEGIN_IPLUG_NAMESPACE
 
-const int kNumBufferSizeOptions = 10;
-const std::string kBufferSizeOptions[kNumBufferSizeOptions] = {"48", "64", "96", "128", "256", "512", "1024", "2048", "4096", "8192" };
-
-inline uint32_t NormalizeAPPBufferSize(uint32_t bufferSize)
-{
-  for (int i = 0; i < kNumBufferSizeOptions; ++i)
-  {
-    const uint32_t option = static_cast<uint32_t>(atoi(kBufferSizeOptions[i].c_str()));
-    if (bufferSize <= option)
-      return option;
-  }
-
-  return static_cast<uint32_t>(atoi(kBufferSizeOptions[kNumBufferSizeOptions - 1].c_str()));
-}
 const int kDeviceDS = 0; const int kDeviceCoreAudio = 0; const int kDeviceAlsa = 0;
 const int kDeviceASIO = 1; const int kDeviceJack = 1;
 extern UINT gSCROLLMSG;
@@ -278,6 +264,7 @@ private:
   std::unique_ptr<RtMidiOut> mMidiOut = nullptr;
   int mMidiOutChannel = -1;
   int mMidiInChannel = -1;
+  uint32_t mMidiNameVersion = 0;
   
   /**  */
   AppState mState;
@@ -325,6 +312,7 @@ private:
    * and treating the default-constructed one as a fallback destroys the user's saved
    * audio settings. See RestoreActiveAudioStateAfterFailure. */
   bool mHaveWorkingAudioState = false;
+  bool mActiveAudioIsRuntimeFallback = false;
 
   /** VoLum: the last time a stream opened at a rate other than the one asked for,
    * so Preferences can say so. Showing the driver's rate is truthful but on its own
