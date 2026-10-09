@@ -112,7 +112,8 @@ public:
     info.id = kVST3MIDIProgramParamStartIdx + channel;
     info.stepCount = kVST3MIDIProgramCount - 1;
     info.defaultNormalizedValue = 0.;
-    info.flags = Steinberg::Vst::ParameterInfo::kCanAutomate | Steinberg::Vst::ParameterInfo::kIsList | Steinberg::Vst::ParameterInfo::kIsProgramChange;
+    // Not automatable: the VST3 spec forbids automating a program-change parameter that changes automatable parameters.
+    info.flags = Steinberg::Vst::ParameterInfo::kIsList | Steinberg::Vst::ParameterInfo::kIsProgramChange;
     info.unitId = unitID;
   }
 

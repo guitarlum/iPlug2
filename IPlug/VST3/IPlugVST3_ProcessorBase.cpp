@@ -324,9 +324,11 @@ void IPlugVST3ProcessorBase::ProcessParameterChanges(ProcessData& data, IPlugQue
               else if (VST3MIDIProgramParamChannel(idx, kVST3MaxMIDIChannels) >= 0)
               {
                 IMidiMsg msg;
-                msg.MakeProgramChange(VST3NormalizedToMIDI7Bit(value), VST3MIDIProgramParamChannel(idx, kVST3MaxMIDIChannels), offsetSamples);
-                fromProcessor.Push(msg);
-                ProcessMidiMsg(msg);
+                if (VST3ProgramParamToMidi(idx, value, offsetSamples, GetTransportIsRunning(), GetRenderingOffline(), mProgramRestoreGuard, msg) == EVST3ProgramParamResult::kProgramChange)
+                {
+                  fromProcessor.Push(msg);
+                  ProcessMidiMsg(msg);
+                }
               }
               else if (idx >= kMIDICCParamStartIdx && idx < kVST3MIDIProgramParamStartIdx)
               {
@@ -341,7 +343,11 @@ void IPlugVST3ProcessorBase::ProcessParameterChanges(ProcessData& data, IPlugQue
                 else if (ctrlr == kPitchBend)
                   msg.MakePitchWheelMsg((value * 2.)-1., channel, offsetSamples);
                 else if (ctrlr == kCtrlProgramChange)
+                {
+                  if (mProgramRestoreGuard.Absorbs(GetTransportIsRunning(), GetRenderingOffline()))
+                    continue;
                   msg.MakeProgramChange(VST3NormalizedToMIDI7Bit(value), channel, offsetSamples);
+                }
                 else
                   msg = IMidiMsg(offsetSamples, static_cast<uint8_t>((IMidiMsg::kControlChange << 4) | channel), static_cast<uint8_t>(ctrlr), static_cast<uint8_t>(VST3NormalizedToMIDI7Bit(value)));
 
@@ -442,6 +448,7 @@ void IPlugVST3ProcessorBase::Process(ProcessData& data, ProcessSetup& setup, con
   }
   
   ProcessAudio(data, setup, ins, outs);
+  mProgramRestoreGuard.EndBlock(data.numSamples, setup.sampleRate, GetTransportIsRunning(), GetRenderingOffline());
   
   if (DoesMIDIOut())
   {

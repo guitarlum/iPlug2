@@ -111,6 +111,7 @@ tresult PLUGIN_API IPlugVST3::setState(IBStream* pState)
 {
   TRACE
   
+  ArmProgramRestoreGuard();
   return IPlugVST3State::SetState(this, pState) ? kResultOk :kResultFalse;
 }
 

@@ -18,6 +18,7 @@
 #include "IPlugAPIBase.h"
 #include "IPlugProcessor.h"
 #include "IPlugVST3_Defs.h"
+#include "IPlugVST3_MidiParams.h"
 
 // Custom bus type function (in global namespace)
 #ifdef CUSTOM_BUSTYPE_FUNC
@@ -191,10 +192,14 @@ public:
   // IPlugProcessor overrides
   bool SendMidiMsg(const IMidiMsg& msg) override;
 
+  /** The host restored the plug-in state: program-change parameter values that follow belong to the restore. */
+  void ArmProgramRestoreGuard() { mProgramRestoreGuard.Arm(); }
+
 private:
+  VST3ProgramRestoreGuard mProgramRestoreGuard;
   int mMaxNChansForMainInputBus = 0;
   IPlugAPIBase& mPlug;
-  Steinberg::Vst::ProcessContext mProcessContext;
+  Steinberg::Vst::ProcessContext mProcessContext {};
   IMidiQueue mMidiOutputQueue;
   bool mSidechainActive = false;
 };

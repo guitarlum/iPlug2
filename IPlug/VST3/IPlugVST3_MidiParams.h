@@ -15,7 +15,11 @@
  * VST3 MIDI parameter layout and value decoding. Kept free of the VST3 SDK so it can be unit tested.
  */
 
+#include <atomic>
+#include <cstdint>
+
 #include "../IPlugConstants.h"
+#include "../IPlugMidi.h"
 
 BEGIN_IPLUG_NAMESPACE
 
@@ -51,6 +55,70 @@ inline int VST3NormalizedToMIDI7Bit(double value)
   if (value >= 1.)
     return 127;
   return static_cast<int>(value * 127. + 0.5);
+}
+
+/** Keeps a project reload from turning into a Program Change.
+ * A host may set the program-change parameter while it restores a project: REAPER restores the last program,
+ * Cubase sends program 0. The value is not in the plug-in state, so it cannot be compared with anything; a
+ * change that arrives shortly after a state load, with the transport stopped and not rendering offline, is
+ * taken as part of the restore. A Program Change from a playing MIDI item or an offline render always passes.
+ * Armed on construction and by every setState; disarmed after kWindowSeconds of processed audio or at the
+ * first block that plays or renders offline. */
+class VST3ProgramRestoreGuard
+{
+public:
+  static constexpr double kWindowSeconds = 0.5;
+
+  /** UI thread: the host restored the plug-in state. */
+  void Arm()
+  {
+    mElapsedSamples.store(0, std::memory_order_relaxed);
+    mArmed.store(true, std::memory_order_release);
+  }
+
+  bool IsArmed() const { return mArmed.load(std::memory_order_acquire); }
+
+  /** Audio thread: @return true if a program-change parameter value in this block belongs to a restore */
+  bool Absorbs(bool transportRunning, bool offline) const
+  {
+    return IsArmed() && !transportRunning && !offline;
+  }
+
+  /** Audio thread: call once per processed block. */
+  void EndBlock(int nFrames, double sampleRate, bool transportRunning, bool offline)
+  {
+    if (!IsArmed())
+      return;
+
+    const int64_t elapsed = mElapsedSamples.fetch_add(nFrames, std::memory_order_relaxed) + nFrames;
+    if (transportRunning || offline || elapsed >= static_cast<int64_t>(sampleRate * kWindowSeconds))
+      mArmed.store(false, std::memory_order_release);
+  }
+
+private:
+  std::atomic<bool> mArmed{true};
+  std::atomic<int64_t> mElapsedSamples{0};
+};
+
+enum class EVST3ProgramParamResult
+{
+  kNotProgramParam,
+  kAbsorbed,
+  kProgramChange
+};
+
+/** Decodes a change of a per-channel program-change parameter into msg. Outside the restore guard every
+ * delivered value becomes a Program Change, the same program twice included. */
+inline EVST3ProgramParamResult VST3ProgramParamToMidi(int paramId, double value, int offsetSamples, bool transportRunning,
+                                                      bool offline, const VST3ProgramRestoreGuard& guard, IMidiMsg& msg)
+{
+  const int channel = VST3MIDIProgramParamChannel(paramId, kVST3MaxMIDIChannels);
+  if (channel < 0)
+    return EVST3ProgramParamResult::kNotProgramParam;
+  if (guard.Absorbs(transportRunning, offline))
+    return EVST3ProgramParamResult::kAbsorbed;
+  msg.MakeProgramChange(VST3NormalizedToMIDI7Bit(value), channel, offsetSamples);
+  return EVST3ProgramParamResult::kProgramChange;
 }
 
 END_IPLUG_NAMESPACE
