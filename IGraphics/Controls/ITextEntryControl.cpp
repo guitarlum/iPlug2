@@ -16,11 +16,12 @@
 
 #include "ITextEntryControl.h"
 #include "IPlugPlatform.h"
-#include "ITextEntryKeyFilter.h"
 #include "wdlutf8.h"
 #include <string>
 #include <codecvt>
 #include <locale>
+
+#include "ITextEntryKeyFilter.h"
 
 #ifdef _MSC_VER
 #if (_MSC_VER >= 1900 /* VS 2015*/) && (_MSC_VER < 1920 /* pre VS 2019 */)
