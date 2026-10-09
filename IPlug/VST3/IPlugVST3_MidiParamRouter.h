@@ -1,10 +1,10 @@
 /*
  ==============================================================================
- 
- This file is part of the iPlug 2 library. Copyright (C) the iPlug 2 developers. 
- 
+
+ This file is part of the iPlug 2 library. Copyright (C) the iPlug 2 developers.
+
  See LICENSE.txt for  more info.
- 
+
  ==============================================================================
 */
 
@@ -58,10 +58,7 @@ public:
     kMidi
   };
 
-  static int64_t NowNs()
-  {
-    return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
-  }
+  static int64_t NowNs() { return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
 
   /** Any thread: the host restored the plug-in state. */
   void Arm()
@@ -101,9 +98,14 @@ public:
       IMidiMsg msg;
       switch (Route(idx, value, offsetSamples, msg))
       {
-        case ERoute::kNotMidiParam: onParam(idx, value, offsetSamples); break;
-        case ERoute::kMidi: onMidi(msg); break;
-        case ERoute::kAbsorbed: break;
+      case ERoute::kNotMidiParam:
+        onParam(idx, value, offsetSamples);
+        break;
+      case ERoute::kMidi:
+        onMidi(msg);
+        break;
+      case ERoute::kAbsorbed:
+        break;
       }
     }
   }
@@ -159,10 +161,7 @@ private:
   static constexpr uint64_t kArmedBit = 1;
   static constexpr uint64_t kMaxFrames = (uint64_t(1) << 31) - 1;
 
-  static uint64_t Pack(uint64_t generation, uint64_t frames, bool armed)
-  {
-    return ((generation & 0xFFFFFFFFu) << 32) | ((frames < kMaxFrames ? frames : kMaxFrames) << 1) | (armed ? kArmedBit : 0);
-  }
+  static uint64_t Pack(uint64_t generation, uint64_t frames, bool armed) { return ((generation & 0xFFFFFFFFu) << 32) | ((frames < kMaxFrames ? frames : kMaxFrames) << 1) | (armed ? kArmedBit : 0); }
   static uint64_t Generation(uint64_t state) { return state >> 32; }
   static uint64_t Frames(uint64_t state) { return (state >> 1) & kMaxFrames; }
   static bool IsArmed(uint64_t state) { return (state & kArmedBit) != 0; }
