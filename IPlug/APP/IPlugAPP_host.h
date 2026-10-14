@@ -196,7 +196,7 @@ public:
   /** Returns the audio device index linked to a particular name
   * @param name The name of the audio device to test
   * @return The integer index RTAudio has given the audio device */
-  int GetAudioDeviceIdx(const char* name) const;
+  int GetAudioDeviceIdx(const char* name, ERoute direction) const;
   
   /** @param direction Either kInput or kOutput
    * @param name The name of the midi device

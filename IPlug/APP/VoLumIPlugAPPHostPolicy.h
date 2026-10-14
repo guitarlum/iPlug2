@@ -170,6 +170,21 @@ inline VoLumDialogAudioPlan VoLumPlanDialogAudio(bool activeEqualsCurrent, bool 
   return {!activeEqualsCurrent && (!tempEqualsCurrent || appliedThisDialog), !activeEqualsTemp || !tempEqualsCurrent};
 }
 
+// A saved device name can match more than one device id: Core Audio names lose their
+// "Manufacturer: " prefix, and some devices list their input and output side as two
+// devices with one name. Prefer an id that has channels in the asked direction; the
+// first id with that name remains the answer for a device whose probe failed, which
+// is in no direction list.
+inline int VoLumFindAudioDevice(const std::string& name, const std::vector<std::string>& idNames,
+                                const std::vector<uint32_t>& directionIds)
+{
+  for (const uint32_t id : directionIds)
+    if (id < idNames.size() && idNames[id] == name)
+      return static_cast<int>(id);
+  const auto first = std::find(idNames.begin(), idNames.end(), name);
+  return first == idNames.end() ? -1 : static_cast<int>(std::distance(idNames.begin(), first));
+}
+
 struct VoLumProbeChannelPlan
 {
   uint32_t runtimeChannel = 1;

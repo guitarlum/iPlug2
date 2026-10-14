@@ -347,15 +347,10 @@ std::string IPlugAPPHost::GetAudioDeviceName(int idx) const
   return mAudioIDDevNames.at(idx);
 }
 
-int IPlugAPPHost::GetAudioDeviceIdx(const char* deviceNameToTest) const
+int IPlugAPPHost::GetAudioDeviceIdx(const char* deviceNameToTest, ERoute direction) const
 {
-  for(int i = 0; i < mAudioIDDevNames.size(); i++)
-  {
-    if(!strcmp(deviceNameToTest, mAudioIDDevNames.at(i).c_str() ))
-      return i;
-  }
-  
-  return -1;
+  return VoLumFindAudioDevice(deviceNameToTest, mAudioIDDevNames,
+                              direction == ERoute::kInput ? mAudioInputDevs : mAudioOutputDevs);
 }
 
 int IPlugAPPHost::GetMIDIPortNumber(ERoute direction, const char* nameToTest, bool nameIsStable) const
@@ -650,10 +645,10 @@ bool IPlugAPPHost::RestoreActiveAudioStateAfterFailure(const char* message)
   ProbeAudioIO();
   const int inputID =
 #if defined OS_WIN
-    (mState.mAudioDriverType == kDeviceASIO) ? GetAudioDeviceIdx(mState.mAudioOutDev.Get()) :
+    (mState.mAudioDriverType == kDeviceASIO) ? GetAudioDeviceIdx(mState.mAudioOutDev.Get(), ERoute::kOutput) :
 #endif
-    GetAudioDeviceIdx(mState.mAudioInDev.Get());
-  const int outputID = GetAudioDeviceIdx(mState.mAudioOutDev.Get());
+    GetAudioDeviceIdx(mState.mAudioInDev.Get(), ERoute::kInput);
+  const int outputID = GetAudioDeviceIdx(mState.mAudioOutDev.Get(), ERoute::kOutput);
 
   if (inputID != -1 && outputID != -1)
     InitAudio(inputID, outputID, mState.mAudioSR, mState.mBufferSize);
@@ -711,15 +706,15 @@ bool IPlugAPPHost::TryToChangeAudio(bool explicitUserChange)
 
 #if defined OS_WIN
   if(mState.mAudioDriverType == kDeviceASIO)
-    inputID = GetAudioDeviceIdx(mState.mAudioOutDev.Get());
+    inputID = GetAudioDeviceIdx(mState.mAudioOutDev.Get(), ERoute::kOutput);
   else
-    inputID = GetAudioDeviceIdx(mState.mAudioInDev.Get());
+    inputID = GetAudioDeviceIdx(mState.mAudioInDev.Get(), ERoute::kInput);
 #elif defined OS_MAC
-  inputID = GetAudioDeviceIdx(mState.mAudioInDev.Get());
+  inputID = GetAudioDeviceIdx(mState.mAudioInDev.Get(), ERoute::kInput);
 #else
   #error NOT IMPLEMENTED
 #endif
-  outputID = GetAudioDeviceIdx(mState.mAudioOutDev.Get());
+  outputID = GetAudioDeviceIdx(mState.mAudioOutDev.Get(), ERoute::kOutput);
 
   bool failedToFindDevice = false;
   bool resetToDefault = false;
