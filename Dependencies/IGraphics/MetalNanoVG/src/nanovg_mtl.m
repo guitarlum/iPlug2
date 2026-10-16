@@ -617,6 +617,20 @@ void mnvgReadPixels(NVGcontext* ctx, int image, int x, int y, int width,
   [commandBuffer waitUntilCompleted];
   memcpy(data, [buffer contents], kBufferSize);
 #else
+#if TARGET_OS_OSX
+  // A managed texture on a discrete GPU needs its GPU writes copied back. On
+  // unified memory the sync would be an empty blit, which aborts the
+  // paravirtual GPU of macOS VMs.
+  if (tex->tex.storageMode == MTLStorageModeManaged &&
+      !mtl.metalLayer.device.hasUnifiedMemory) {
+    id<MTLCommandBuffer> syncBuffer = [mtl.commandQueue commandBuffer];
+    id<MTLBlitCommandEncoder> blit = [syncBuffer blitCommandEncoder];
+    [blit synchronizeResource:tex->tex];
+    [blit endEncoding];
+    [syncBuffer commit];
+    [syncBuffer waitUntilCompleted];
+  }
+#endif  // TARGET_OS_OSX
   [tex->tex getBytes:data
          bytesPerRow:bytesPerRow
           fromRegion:MTLRegionMake2D(x, y, width, height)
@@ -897,6 +911,8 @@ enum MNVGTarget mnvgTarget() {
 }
 
 - (void)renderCancel {
+  // A clear meant for the cancelled target must not land on the next one.
+  _clearBufferOnFlush = NO;
   _buffers->image = 0;
   _buffers->isBusy = NO;
   _buffers->nindexes = 0;
@@ -1222,7 +1238,8 @@ enum MNVGTarget mnvgTarget() {
                   bytesPerRow:bytesPerRow];
     }
 
-    if (imageFlags & NVG_IMAGE_GENERATE_MIPMAPS) {
+    if ((imageFlags & NVG_IMAGE_GENERATE_MIPMAPS) &&
+        tex->tex.mipmapLevelCount > 1) {
       id<MTLCommandBuffer> commandBuffer = [_commandQueue commandBuffer];
       id<MTLBlitCommandEncoder> encoder = [commandBuffer blitCommandEncoder];
       [encoder generateMipmapsForTexture:tex->tex];
@@ -1264,6 +1281,17 @@ enum MNVGTarget mnvgTarget() {
 }
 
 - (void)renderDelete {
+  // Completion handlers of frames still in flight write their MNVGbuffers.
+  // The timeout keeps a slot that is never flushed from hanging the close.
+  int held = 0;
+  while (_semaphore != nil && held < _maxBuffers &&
+         dispatch_semaphore_wait(_semaphore,
+             dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC)) == 0) {
+    ++held;
+  }
+  // libdispatch aborts when a semaphore is freed below its initial value.
+  while (held-- > 0) dispatch_semaphore_signal(_semaphore);
+
   for (MNVGbuffers* buffers in _cbuffers) {
     buffers->commandBuffer = nil;
     buffers->viewSizeBuffer = nil;
@@ -1454,6 +1482,10 @@ error:
       [self renderCancel];
       return;
     }
+    // The stencil attachment must match the drawable, which can lag the
+    // viewport until the layer's drawableSize catches up.
+    textureSize = (vector_uint2){(uint)colorTexture.width,
+                                 (uint)colorTexture.height};
   }
   [self updateStencilTextureToSize:&textureSize];
 
@@ -1462,7 +1494,8 @@ error:
     [self renderCancel];
     return;
   }
-  __block MNVGbuffers* buffers = _buffers;
+  MNVGbuffers* buffers = _buffers;
+  dispatch_semaphore_t semaphore = _semaphore;
   buffers->commandBuffer = commandBuffer;
   _renderEncoder = [self renderCommandEncoderWithColorTexture:colorTexture];
   if (_renderEncoder == nil) {
@@ -1479,7 +1512,7 @@ error:
       buffers->nverts = 0;
       buffers->ncalls = 0;
       buffers->nuniforms = 0;
-      dispatch_semaphore_signal(self.semaphore);
+      dispatch_semaphore_signal(semaphore);
   }];
 
   MNVGcall* call = &buffers->calls[0];
@@ -1504,18 +1537,6 @@ error:
   if (drawable && !_metalLayer.presentsWithTransaction) {
     [commandBuffer presentDrawable:drawable];
   }
-
-#if TARGET_OS_OSX
-  // Makes mnvgReadPixels() work as expected on Mac. Only managed textures
-  // need it; on any other storage the blit encoder would carry no work.
-  if (s_framebuffer != NULL &&
-      colorTexture.storageMode == MTLStorageModeManaged) {
-    id<MTLBlitCommandEncoder> blitCommandEncoder = [commandBuffer
-        blitCommandEncoder];
-    [blitCommandEncoder synchronizeResource:colorTexture];
-    [blitCommandEncoder endEncoding];
-  }
-#endif  // TARGET_OS_OSX
 
   [commandBuffer commit];
 
