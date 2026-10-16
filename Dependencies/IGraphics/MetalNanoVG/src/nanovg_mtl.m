@@ -1416,13 +1416,61 @@ error:
     return;
   }
 
-  id<MTLCommandBuffer> commandBuffer = [_commandQueue commandBuffer];
-  id<MTLTexture> colorTexture = nil;;
-  vector_uint2 textureSize;
+  // Nothing to draw and nothing to clear leaves the target as it is. An
+  // encoder without work aborts the paravirtual GPU of macOS VMs.
+  if (_buffers->ncalls == 0 && !_clearBufferOnFlush) {
+    [self renderCancel];
+    return;
+  }
 
-  _buffers->commandBuffer = commandBuffer;
+  // Resolve the target before creating a command buffer: every buffer made
+  // below must be committed. One left enqueued but uncommitted stalls the
+  // queue, never frees its slot, and aborts the paravirtual GPU when released.
+  id<MTLTexture> colorTexture = nil;
+  id<CAMetalDrawable> drawable = nil;
+  vector_uint2 textureSize = {0, 0};
+  int image = 0;
+  if (s_framebuffer == NULL ||
+      nvgInternalParams(s_framebuffer->ctx)->userPtr != (__bridge void*)self) {
+    textureSize = _viewPortSize;
+  } else {  // renders in framebuffer
+    image = s_framebuffer->image;
+    MNVGtexture* tex = [self findTexture:image];
+    colorTexture = tex == nil ? nil : tex->tex;
+    if (colorTexture != nil) {
+      textureSize = (vector_uint2){(uint)colorTexture.width,
+                                   (uint)colorTexture.height};
+    }
+  }
+  if (textureSize.x == 0 || textureSize.y == 0) {
+    [self renderCancel];
+    return;
+  }
+  if (colorTexture == nil) {
+    // nil while the window is hidden or no drawable frees up in time.
+    drawable = _metalLayer.nextDrawable;
+    colorTexture = drawable.texture;
+    if (colorTexture == nil) {
+      [self renderCancel];
+      return;
+    }
+  }
+  [self updateStencilTextureToSize:&textureSize];
+
+  id<MTLCommandBuffer> commandBuffer = [_commandQueue commandBuffer];
+  if (commandBuffer == nil) {
+    [self renderCancel];
+    return;
+  }
   __block MNVGbuffers* buffers = _buffers;
-  [commandBuffer enqueue];
+  buffers->commandBuffer = commandBuffer;
+  _renderEncoder = [self renderCommandEncoderWithColorTexture:colorTexture];
+  if (_renderEncoder == nil) {
+    buffers->commandBuffer = nil;
+    [self renderCancel];
+    return;
+  }
+  buffers->image = image;
   [commandBuffer addCompletedHandler:^(id<MTLCommandBuffer> buffer) {
       buffers->isBusy = NO;
       buffers->commandBuffer = nil;
@@ -1434,28 +1482,6 @@ error:
       dispatch_semaphore_signal(self.semaphore);
   }];
 
-  if (s_framebuffer == NULL ||
-      nvgInternalParams(s_framebuffer->ctx)->userPtr != (__bridge void*)self) {
-    textureSize = _viewPortSize;
-  } else {  // renders in framebuffer
-    buffers->image = s_framebuffer->image;
-    MNVGtexture* tex = [self findTexture:s_framebuffer->image];
-    colorTexture = tex->tex;
-    textureSize = (vector_uint2){(uint)colorTexture.width,
-                                 (uint)colorTexture.height};
-  }
-  if (textureSize.x == 0 || textureSize.y == 0) return;
-  [self updateStencilTextureToSize:&textureSize];
-
-  id<CAMetalDrawable> drawable = nil;
-  if (colorTexture == nil) {
-    drawable = _metalLayer.nextDrawable;
-    colorTexture = drawable.texture;
-  }
-  _renderEncoder = [self renderCommandEncoderWithColorTexture:colorTexture];
-  if (_renderEncoder == nil) {
-    return;
-  }
   MNVGcall* call = &buffers->calls[0];
   for (int i = buffers->ncalls; i--; ++call) {
     MNVGblend* blend = &call->blendFunc;
@@ -1476,23 +1502,25 @@ error:
   _renderEncoder = nil;
 
   if (drawable && !_metalLayer.presentsWithTransaction) {
-    [_buffers->commandBuffer presentDrawable:drawable];
+    [commandBuffer presentDrawable:drawable];
   }
 
 #if TARGET_OS_OSX
-  // Makes mnvgReadPixels() work as expected on Mac.
-  if (s_framebuffer != NULL) {
-    id<MTLBlitCommandEncoder> blitCommandEncoder = [_buffers->commandBuffer
+  // Makes mnvgReadPixels() work as expected on Mac. Only managed textures
+  // need it; on any other storage the blit encoder would carry no work.
+  if (s_framebuffer != NULL &&
+      colorTexture.storageMode == MTLStorageModeManaged) {
+    id<MTLBlitCommandEncoder> blitCommandEncoder = [commandBuffer
         blitCommandEncoder];
     [blitCommandEncoder synchronizeResource:colorTexture];
     [blitCommandEncoder endEncoding];
   }
 #endif  // TARGET_OS_OSX
 
-  [_buffers->commandBuffer commit];
+  [commandBuffer commit];
 
   if (drawable && _metalLayer.presentsWithTransaction) {
-    [_buffers->commandBuffer waitUntilScheduled];
+    [commandBuffer waitUntilScheduled];
     [drawable present];
   }
 }
