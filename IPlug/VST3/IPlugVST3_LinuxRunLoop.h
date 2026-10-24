@@ -118,7 +118,7 @@ public:
 
 private:
   explicit IPlugVST3RunLoop(Steinberg::IPtr<Steinberg::Linux::IRunLoop> runLoop)
-  : mRunLoop(std::move(runLoop))
+    : mRunLoop(std::move(runLoop))
   {
   }
 
@@ -160,8 +160,8 @@ private:
   {
   public:
     HostTimer(TimerHandler handler, void* userData)
-    : mHandler(handler)
-    , mUserData(userData)
+      : mHandler(handler)
+      , mUserData(userData)
     {
     }
 
@@ -184,9 +184,9 @@ private:
   {
   public:
     HostFd(int fd, FdHandler handler, void* userData)
-    : mFd(fd)
-    , mHandler(handler)
-    , mUserData(userData)
+      : mFd(fd)
+      , mHandler(handler)
+      , mUserData(userData)
     {
     }
 
@@ -264,8 +264,8 @@ private:
   {
   public:
     Entry(TimerHandler handler, void* userData)
-    : mHandler(handler)
-    , mUserData(userData)
+      : mHandler(handler)
+      , mUserData(userData)
     {
     }
 

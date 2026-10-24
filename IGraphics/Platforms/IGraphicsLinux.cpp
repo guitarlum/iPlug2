@@ -12,7 +12,7 @@
 // Order is load-bearing. IGraphicsLinux.h pulls in IGraphics and glad before
 // any Xlib macro exists. glad sets __gl_h_, so GL/glx.h skips GL/gl.h, and
 // glx.h is parsed while X11 Bool is still defined. IGraphicsLinuxGL.h then
-// undefs None/True/False/CurrentTime, hence the k* constants below.
+// undefs None/True/False, hence the k* constants below.
 #include "IGraphicsLinux.h"
 #include <X11/Xlib.h>
 #include <X11/Xresource.h>
@@ -40,7 +40,6 @@ using namespace igraphics;
 namespace
 {
 constexpr unsigned long kNone = 0L;
-constexpr unsigned long kCurrentTime = 0L;
 constexpr int kTrue = 1;
 constexpr int kFalse = 0;
 constexpr uint32_t kDisplayTimerMs = 16;
@@ -54,6 +53,13 @@ __attribute__((format(printf, 1, 2))) void Log(const char* format, ...)
   vfprintf(stderr, format, args);
   fprintf(stderr, "\n");
   va_end(args);
+}
+
+// IGRAPHICS_LINUX_TRACE=1 logs window lifetime, scale source and GLX path.
+bool Tracing()
+{
+  static const bool trace = getenv("IGRAPHICS_LINUX_TRACE") != nullptr;
+  return trace;
 }
 
 // XSetErrorHandler is process-wide. Ours is installed while any editor has a
@@ -103,7 +109,7 @@ IMouseMod ModFromState(unsigned int state, unsigned int pressed, unsigned int re
 } // namespace
 
 IGraphicsLinux::IGraphicsLinux(IGEditorDelegate& dlg, int w, int h, int fps, float scale)
-: IGRAPHICS_DRAW_CLASS(dlg, w, h, fps, scale)
+  : IGRAPHICS_DRAW_CLASS(dlg, w, h, fps, scale)
 {
 }
 
@@ -125,9 +131,12 @@ void* IGraphicsLinux::OpenWindow(void* pParent)
   }
   AddDisplay(mDisplay);
 
-  const float scale = DetectScreenScale();
+  const char* scaleSource = "default";
+  const float scale = DetectScreenScale(scaleSource);
   const unsigned long parent = pParent ? reinterpret_cast<unsigned long>(pParent) : RootWindow(mDisplay, DefaultScreen(mDisplay));
-  if (!CreateGLWindow(parent, static_cast<int>(WindowWidth() * scale), static_cast<int>(WindowHeight() * scale)))
+  const int w = static_cast<int>(WindowWidth() * scale);
+  const int h = static_cast<int>(WindowHeight() * scale);
+  if (!CreateGLWindow(parent, w, h))
   {
     DestroyGLWindow();
     return nullptr;
@@ -152,6 +161,8 @@ void* IGraphicsLinux::OpenWindow(void* pParent)
   mFdBinding = IPlugLinuxBindFd(ConnectionNumber(mDisplay), [](int, void* p) { static_cast<IGraphicsLinux*>(p)->ProcessX11Events(); }, this);
   mTimerBinding = IPlugLinuxBindTimer(kDisplayTimerMs, [](void* p) { static_cast<IGraphicsLinux*>(p)->OnDisplayTimer(); }, this);
   XFlush(mDisplay);
+  if (Tracing())
+    Log("editor 0x%lx open in 0x%lx, %dx%d px, screen scale %.2f from %s", mPlugWnd, parent, w, h, scale, scaleSource);
   return GetWindow();
 }
 
@@ -171,14 +182,35 @@ void IGraphicsLinux::CloseWindow()
     OnViewDestroyed();
     DeactivateGLContext();
   }
+  if (Tracing())
+    Log("editor 0x%lx closed", mPlugWnd);
   DestroyGLWindow();
 }
 
 bool IGraphicsLinux::CreateGLWindow(unsigned long parent, int w, int h)
 {
   const int screen = DefaultScreen(mDisplay);
-  const int fbAttribs[] = {GLX_X_RENDERABLE, kTrue, GLX_DRAWABLE_TYPE, GLX_WINDOW_BIT, GLX_RENDER_TYPE, GLX_RGBA_BIT, GLX_X_VISUAL_TYPE, GLX_TRUE_COLOR, GLX_RED_SIZE, 8, GLX_GREEN_SIZE, 8, GLX_BLUE_SIZE, 8,
-                           GLX_DEPTH_SIZE, 24, GLX_STENCIL_SIZE, 8, GLX_DOUBLEBUFFER, kTrue, 0};
+  const int fbAttribs[] = {GLX_X_RENDERABLE,
+                           kTrue,
+                           GLX_DRAWABLE_TYPE,
+                           GLX_WINDOW_BIT,
+                           GLX_RENDER_TYPE,
+                           GLX_RGBA_BIT,
+                           GLX_X_VISUAL_TYPE,
+                           GLX_TRUE_COLOR,
+                           GLX_RED_SIZE,
+                           8,
+                           GLX_GREEN_SIZE,
+                           8,
+                           GLX_BLUE_SIZE,
+                           8,
+                           GLX_DEPTH_SIZE,
+                           24,
+                           GLX_STENCIL_SIZE,
+                           8,
+                           GLX_DOUBLEBUFFER,
+                           kTrue,
+                           0};
 
   // The window gets the visual of the FBConfig the context is created from,
   // preferring the parent's depth. The GLX 1.2 path (ticket 05 leaf) is the
@@ -207,6 +239,7 @@ bool IGraphicsLinux::CreateGLWindow(unsigned long parent, int w, int h)
   }
   if (fbConfig)
     mGLContext = glXCreateNewContext(mDisplay, fbConfig, GLX_RGBA_TYPE, nullptr, kTrue);
+  const bool fromFBConfig = mGLContext != nullptr;
   if (!mGLContext)
   {
     if (pVisual)
@@ -222,14 +255,15 @@ bool IGraphicsLinux::CreateGLWindow(unsigned long parent, int w, int h)
     Log("no GLX visual with RGB8, depth 24 and double buffering");
     return false;
   }
+  if (Tracing())
+    Log("GLX %s, visual 0x%lx, depth %d", fromFBConfig ? "FBConfig" : "1.2 glXChooseVisual", pVisual->visualid, pVisual->depth);
 
   mColormap = XCreateColormap(mDisplay, RootWindow(mDisplay, screen), pVisual->visual, AllocNone);
   XSetWindowAttributes attrs = {};
   attrs.colormap = mColormap;
   attrs.border_pixel = 0;
   attrs.background_pixmap = kNone;
-  attrs.event_mask =
-    ExposureMask | StructureNotifyMask | ButtonPressMask | ButtonReleaseMask | PointerMotionMask | KeyPressMask | KeyReleaseMask | EnterWindowMask | LeaveWindowMask | FocusChangeMask;
+  attrs.event_mask = ExposureMask | StructureNotifyMask | ButtonPressMask | ButtonReleaseMask | PointerMotionMask | KeyPressMask | KeyReleaseMask | EnterWindowMask | LeaveWindowMask | FocusChangeMask;
   const int errors = sXErrorCount;
   mPlugWnd = XCreateWindow(mDisplay, parent, 0, 0, std::max(w, 1), std::max(h, 1), 0, pVisual->depth, InputOutput, pVisual->visual, CWColormap | CWBorderPixel | CWBackPixmap | CWEventMask, &attrs);
   XFree(pVisual);
@@ -265,10 +299,10 @@ void IGraphicsLinux::DestroyGLWindow()
   mDisplay = nullptr;
 }
 
-float IGraphicsLinux::DetectScreenScale() const
+float IGraphicsLinux::DetectScreenScale(const char*& source) const
 {
-  // Fallbacks for hosts that never call IPlugView::setContentScaleFactor:
-  // Xft.dpi from the X resource database, then GDK_SCALE.
+  // The window opens at this scale. A host that calls
+  // IPlugView::setContentScaleFactor overrides it right after attached().
   float scale = 0.f;
   if (const char* pResources = XResourceManagerString(mDisplay))
   {
@@ -278,14 +312,21 @@ float IGraphicsLinux::DetectScreenScale() const
       char* pType = nullptr;
       XrmValue value = {};
       if (XrmGetResource(db, "Xft.dpi", "Xft.Dpi", &pType, &value) && value.addr)
+      {
         scale = static_cast<float>(atof(value.addr) / 96.0);
+        source = "Xft.dpi";
+      }
       XrmDestroyDatabase(db);
     }
   }
   if (scale <= 0.f)
   {
+    source = "default";
     if (const char* pGdkScale = getenv("GDK_SCALE"))
+    {
       scale = static_cast<float>(atoi(pGdkScale));
+      source = "GDK_SCALE";
+    }
   }
   return Clip(std::round(scale * 4.f) / 4.f, 1.f, 4.f);
 }
@@ -294,9 +335,13 @@ void IGraphicsLinux::PlatformResize(bool parentHasResized)
 {
   if (!mPlugWnd)
     return;
-  XResizeWindow(mDisplay, mPlugWnd, static_cast<int>(WindowWidth() * GetScreenScale()), static_cast<int>(WindowHeight() * GetScreenScale()));
+  const int w = static_cast<int>(WindowWidth() * GetScreenScale());
+  const int h = static_cast<int>(WindowHeight() * GetScreenScale());
+  XResizeWindow(mDisplay, mPlugWnd, w, h);
   XFlush(mDisplay);
   mNeedsFullRedraw = true;
+  if (Tracing())
+    Log("editor 0x%lx resized to %dx%d px, screen scale %.2f", mPlugWnd, w, h, GetScreenScale());
 }
 
 void IGraphicsLinux::DrawResize()
@@ -381,117 +426,120 @@ void IGraphicsLinux::DispatchEvent(void* pEvent)
   const float scale = GetTotalScale();
   switch (event.type)
   {
-    case Expose:
-      if (event.xexpose.count == 0)
-        mNeedsFullRedraw = true;
-      break;
-    case ButtonPress:
+  case Expose:
+    if (event.xexpose.count == 0)
+      mNeedsFullRedraw = true;
+    break;
+  case ButtonPress: {
+    const XButtonEvent& be = event.xbutton;
+    const float x = be.x / scale;
+    const float y = be.y / scale;
+    const IMouseMod mod = ModFromState(be.state, be.button, 0);
+    if (be.button == Button4 || be.button == Button5)
     {
-      const XButtonEvent& be = event.xbutton;
-      const float x = be.x / scale;
-      const float y = be.y / scale;
-      const IMouseMod mod = ModFromState(be.state, be.button, 0);
-      if (be.button == Button4 || be.button == Button5)
-      {
-        OnMouseWheel(x, y, mod, be.button == Button4 ? 1.f : -1.f);
-        break;
-      }
-      if (be.button > Button5) // horizontal wheel: no IGraphics event
-        break;
-      if (!mHasFocus)
-        XSetInputFocus(mDisplay, mPlugWnd, RevertToParent, be.time);
+      OnMouseWheel(x, y, mod, be.button == Button4 ? 1.f : -1.f);
+      break;
+    }
+    if (be.button > Button5) // horizontal wheel: no IGraphics event
+      break;
+    if (!mHasFocus)
+      XSetInputFocus(mDisplay, mPlugWnd, RevertToParent, be.time);
 
-      // X11 has no double-click event. Like WM_LBUTTONDBLCLK, the second press
-      // of a quick pair arrives as a double click instead of a mouse down.
-      const bool doubleClick = be.button == static_cast<unsigned int>(mLastClickButton) && be.time - mLastClickTime < kDoubleClickMs && std::fabs(x - mLastClickX) < 4.f
-                               && std::fabs(y - mLastClickY) < 4.f;
-      mLastClickTime = doubleClick ? 0 : be.time;
-      mLastClickButton = static_cast<int>(be.button);
-      mLastClickX = mCursorX = x;
-      mLastClickY = mCursorY = y;
-      if (doubleClick)
-        OnMouseDblClick(x, y, mod);
-      else
-        OnMouseDown({IMouseInfo{x, y, 0.f, 0.f, mod}});
+    // X11 has no double-click event. Like WM_LBUTTONDBLCLK, the second press
+    // of a quick pair arrives as a double click instead of a mouse down.
+    const bool doubleClick =
+      be.button == static_cast<unsigned int>(mLastClickButton) && be.time - mLastClickTime < kDoubleClickMs && std::fabs(x - mLastClickX) < 4.f && std::fabs(y - mLastClickY) < 4.f;
+    mLastClickTime = doubleClick ? 0 : be.time;
+    mLastClickButton = static_cast<int>(be.button);
+    mLastClickX = mCursorX = x;
+    mLastClickY = mCursorY = y;
+    if (doubleClick)
+      OnMouseDblClick(x, y, mod);
+    else
+      OnMouseDown({IMouseInfo{x, y, 0.f, 0.f, mod}});
+    break;
+  }
+  case ButtonRelease: {
+    const XButtonEvent& be = event.xbutton;
+    if (be.button >= Button4)
       break;
-    }
-    case ButtonRelease:
+    const float x = be.x / scale;
+    const float y = be.y / scale;
+    OnMouseUp({IMouseInfo{x, y, 0.f, 0.f, ModFromState(be.state, 0, be.button)}});
+    break;
+  }
+  case MotionNotify: {
+    // Only the newest of a run of queued motions matters.
+    while (XEventsQueued(mDisplay, QueuedAlready) > 0)
     {
-      const XButtonEvent& be = event.xbutton;
-      if (be.button >= Button4)
+      XEvent next;
+      XPeekEvent(mDisplay, &next);
+      if (next.type != MotionNotify || next.xmotion.window != mPlugWnd)
         break;
-      const float x = be.x / scale;
-      const float y = be.y / scale;
-      OnMouseUp({IMouseInfo{x, y, 0.f, 0.f, ModFromState(be.state, 0, be.button)}});
-      break;
+      XNextEvent(mDisplay, &event);
     }
-    case MotionNotify:
+    const XMotionEvent& me = event.xmotion;
+    const float x = me.x / scale;
+    const float y = me.y / scale;
+    const IMouseMod mod = ModFromState(me.state, 0, 0);
+    if (me.state & (Button1Mask | Button3Mask))
     {
-      // Only the newest of a run of queued motions matters.
-      while (XEventsQueued(mDisplay, QueuedAlready) > 0)
-      {
-        XEvent next;
-        XPeekEvent(mDisplay, &next);
-        if (next.type != MotionNotify || next.xmotion.window != mPlugWnd)
-          break;
-        XNextEvent(mDisplay, &event);
-      }
-      const XMotionEvent& me = event.xmotion;
-      const float x = me.x / scale;
-      const float y = me.y / scale;
-      const IMouseMod mod = ModFromState(me.state, 0, 0);
-      if (me.state & (Button1Mask | Button3Mask))
-      {
-        const float dX = x - mCursorX;
-        const float dY = y - mCursorY;
-        mCursorX = x;
-        mCursorY = y;
-        if (dX || dY)
-          OnMouseDrag({IMouseInfo{x, y, dX, dY, mod}});
-        if (mCursorLock)
-          MoveMouseCursor(mHiddenCursorX, mHiddenCursorY);
-      }
-      else
-      {
-        mCursorX = x;
-        mCursorY = y;
-        OnMouseOver(x, y, mod);
-      }
-      break;
+      const float dX = x - mCursorX;
+      const float dY = y - mCursorY;
+      mCursorX = x;
+      mCursorY = y;
+      if (dX || dY)
+        OnMouseDrag({IMouseInfo{x, y, dX, dY, mod}});
+      if (mCursorLock)
+        MoveMouseCursor(mHiddenCursorX, mHiddenCursorY);
     }
-    case EnterNotify: OnSetCursor(); break;
-    case LeaveNotify:
-      if (event.xcrossing.mode == NotifyNormal && !(event.xcrossing.state & (Button1Mask | Button2Mask | Button3Mask)))
-        OnMouseOut();
-      break;
-    case FocusIn: mHasFocus = true; break;
-    case FocusOut: mHasFocus = false; break;
-    case KeyPress:
-    case KeyRelease:
+    else
     {
-      XKeyEvent& ke = event.xkey;
-      // Auto-repeat arrives as release+press with one timestamp. Windows sends
-      // only repeated key downs, so the release is dropped.
-      if (event.type == KeyRelease && XEventsQueued(mDisplay, QueuedAfterReading) > 0)
-      {
-        XEvent next;
-        XPeekEvent(mDisplay, &next);
-        if (next.type == KeyPress && next.xkey.keycode == ke.keycode && next.xkey.time == ke.time)
-          break;
-      }
-      char latin1[16] = {};
-      KeySym keysym = 0;
-      XLookupString(&ke, latin1, sizeof(latin1) - 1, &keysym, nullptr);
-      char utf8[5] = {};
-      KeysymToUTF8(keysym, utf8);
-      const IKeyPress keyPress(utf8, KeysymToVK(keysym), ke.state & ShiftMask, ke.state & ControlMask, ke.state & Mod1Mask);
-      if (event.type == KeyPress)
-        OnKeyDown(ke.x / scale, ke.y / scale, keyPress);
-      else
-        OnKeyUp(ke.x / scale, ke.y / scale, keyPress);
-      break;
+      mCursorX = x;
+      mCursorY = y;
+      OnMouseOver(x, y, mod);
     }
-    default: break;
+    break;
+  }
+  case EnterNotify:
+    OnSetCursor();
+    break;
+  case LeaveNotify:
+    if (event.xcrossing.mode == NotifyNormal && !(event.xcrossing.state & (Button1Mask | Button2Mask | Button3Mask)))
+      OnMouseOut();
+    break;
+  case FocusIn:
+    mHasFocus = true;
+    break;
+  case FocusOut:
+    mHasFocus = false;
+    break;
+  case KeyPress:
+  case KeyRelease: {
+    XKeyEvent& ke = event.xkey;
+    // Auto-repeat arrives as release+press with one timestamp. Windows sends
+    // only repeated key downs, so the release is dropped.
+    if (event.type == KeyRelease && XEventsQueued(mDisplay, QueuedAfterReading) > 0)
+    {
+      XEvent next;
+      XPeekEvent(mDisplay, &next);
+      if (next.type == KeyPress && next.xkey.keycode == ke.keycode && next.xkey.time == ke.time)
+        break;
+    }
+    char latin1[16] = {};
+    KeySym keysym = 0;
+    XLookupString(&ke, latin1, sizeof(latin1) - 1, &keysym, nullptr);
+    char utf8[5] = {};
+    KeysymToUTF8(keysym, utf8);
+    const IKeyPress keyPress(utf8, KeysymToVK(keysym), ke.state & ShiftMask, ke.state & ControlMask, ke.state & Mod1Mask);
+    if (event.type == KeyPress)
+      OnKeyDown(ke.x / scale, ke.y / scale, keyPress);
+    else
+      OnKeyUp(ke.x / scale, ke.y / scale, keyPress);
+    break;
+  }
+  default:
+    break;
   }
 }
 
@@ -499,8 +547,8 @@ void IGraphicsLinux::DispatchEvent(void* pEvent)
 
 ECursor IGraphicsLinux::SetMouseCursor(ECursor cursorType)
 {
-  static const unsigned int kShapes[] = {XC_left_ptr, XC_xterm, XC_watch, XC_crosshair, XC_sb_up_arrow, XC_bottom_right_corner, XC_bottom_left_corner, XC_sb_h_double_arrow,
-                                         XC_sb_v_double_arrow, XC_fleur, XC_X_cursor, XC_hand2, XC_watch, XC_question_arrow};
+  static const unsigned int kShapes[] = {XC_left_ptr,          XC_xterm, XC_watch,    XC_crosshair, XC_sb_up_arrow, XC_bottom_right_corner, XC_bottom_left_corner, XC_sb_h_double_arrow,
+                                         XC_sb_v_double_arrow, XC_fleur, XC_X_cursor, XC_hand2,     XC_watch,       XC_question_arrow};
   static_assert(sizeof(kShapes) / sizeof(kShapes[0]) == static_cast<int>(ECursor::HELP) + 1, "one X cursor per ECursor");
   static_assert(sizeof(kShapes) / sizeof(kShapes[0]) <= sizeof(mCursors) / sizeof(mCursors[0]), "cursor cache too small");
 

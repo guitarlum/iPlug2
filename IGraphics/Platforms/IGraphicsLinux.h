@@ -11,6 +11,7 @@
 #pragma once
 
 #include "IPlugPlatform.h"
+
 #include "IGraphics_select.h"
 
 // Xlib stays out of this header: its None/Bool/Status macros would leak into
@@ -88,7 +89,7 @@ protected:
 private:
   bool CreateGLWindow(unsigned long parent, int w, int h);
   void DestroyGLWindow();
-  float DetectScreenScale() const;
+  float DetectScreenScale(const char*& source) const;
   void DispatchEvent(void* pEvent);
   void FreeCursors();
 

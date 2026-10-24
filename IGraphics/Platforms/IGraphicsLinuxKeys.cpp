@@ -23,60 +23,94 @@ int KeysymToVK(unsigned long ks)
 {
   switch (ks)
   {
-    case XK_BackSpace: return kVK_BACK;
-    case XK_Tab:
-    case XK_ISO_Left_Tab: return kVK_TAB;
-    case XK_Clear: return kVK_CLEAR;
-    case XK_Return:
-    case XK_KP_Enter: return kVK_RETURN;
-    case XK_Pause: return kVK_PAUSE;
-    case XK_Caps_Lock: return kVK_CAPITAL;
-    case XK_Escape: return kVK_ESCAPE;
-    case XK_space:
-    case XK_KP_Space: return kVK_SPACE;
-    case XK_Prior:
-    case XK_KP_Prior: return kVK_PRIOR;
-    case XK_Next:
-    case XK_KP_Next: return kVK_NEXT;
-    case XK_End:
-    case XK_KP_End: return kVK_END;
-    case XK_Home:
-    case XK_KP_Home: return kVK_HOME;
-    case XK_Left:
-    case XK_KP_Left: return kVK_LEFT;
-    case XK_Up:
-    case XK_KP_Up: return kVK_UP;
-    case XK_Right:
-    case XK_KP_Right: return kVK_RIGHT;
-    case XK_Down:
-    case XK_KP_Down: return kVK_DOWN;
-    case XK_Select: return kVK_SELECT;
-    case XK_Print: return kVK_SNAPSHOT;
-    case XK_Insert:
-    case XK_KP_Insert: return kVK_INSERT;
-    case XK_Delete:
-    case XK_KP_Delete: return kVK_DELETE;
-    case XK_Help: return kVK_HELP;
-    case XK_Super_L:
-    case XK_Super_R: return kVK_LWIN;
-    case XK_KP_Multiply: return kVK_MULTIPLY;
-    case XK_KP_Add: return kVK_ADD;
-    case XK_KP_Separator: return kVK_SEPARATOR;
-    case XK_KP_Subtract: return kVK_SUBTRACT;
-    case XK_KP_Decimal: return kVK_DECIMAL;
-    case XK_KP_Divide: return kVK_DIVIDE;
-    case XK_Num_Lock: return kVK_NUMLOCK;
-    case XK_Scroll_Lock: return kVK_SCROLL;
-    case XK_Shift_L:
-    case XK_Shift_R: return kVK_SHIFT;
-    case XK_Control_L:
-    case XK_Control_R: return kVK_CONTROL;
-    case XK_Alt_L:
-    case XK_Alt_R:
-    case XK_Meta_L:
-    case XK_Meta_R:
-    case XK_ISO_Level3_Shift: return kVK_MENU;
-    default: break;
+  case XK_BackSpace:
+    return kVK_BACK;
+  case XK_Tab:
+  case XK_ISO_Left_Tab:
+    return kVK_TAB;
+  case XK_Clear:
+    return kVK_CLEAR;
+  case XK_Return:
+  case XK_KP_Enter:
+    return kVK_RETURN;
+  case XK_Pause:
+    return kVK_PAUSE;
+  case XK_Caps_Lock:
+    return kVK_CAPITAL;
+  case XK_Escape:
+    return kVK_ESCAPE;
+  case XK_space:
+  case XK_KP_Space:
+    return kVK_SPACE;
+  case XK_Prior:
+  case XK_KP_Prior:
+    return kVK_PRIOR;
+  case XK_Next:
+  case XK_KP_Next:
+    return kVK_NEXT;
+  case XK_End:
+  case XK_KP_End:
+    return kVK_END;
+  case XK_Home:
+  case XK_KP_Home:
+    return kVK_HOME;
+  case XK_Left:
+  case XK_KP_Left:
+    return kVK_LEFT;
+  case XK_Up:
+  case XK_KP_Up:
+    return kVK_UP;
+  case XK_Right:
+  case XK_KP_Right:
+    return kVK_RIGHT;
+  case XK_Down:
+  case XK_KP_Down:
+    return kVK_DOWN;
+  case XK_Select:
+    return kVK_SELECT;
+  case XK_Print:
+    return kVK_SNAPSHOT;
+  case XK_Insert:
+  case XK_KP_Insert:
+    return kVK_INSERT;
+  case XK_Delete:
+  case XK_KP_Delete:
+    return kVK_DELETE;
+  case XK_Help:
+    return kVK_HELP;
+  case XK_Super_L:
+  case XK_Super_R:
+    return kVK_LWIN;
+  case XK_KP_Multiply:
+    return kVK_MULTIPLY;
+  case XK_KP_Add:
+    return kVK_ADD;
+  case XK_KP_Separator:
+    return kVK_SEPARATOR;
+  case XK_KP_Subtract:
+    return kVK_SUBTRACT;
+  case XK_KP_Decimal:
+    return kVK_DECIMAL;
+  case XK_KP_Divide:
+    return kVK_DIVIDE;
+  case XK_Num_Lock:
+    return kVK_NUMLOCK;
+  case XK_Scroll_Lock:
+    return kVK_SCROLL;
+  case XK_Shift_L:
+  case XK_Shift_R:
+    return kVK_SHIFT;
+  case XK_Control_L:
+  case XK_Control_R:
+    return kVK_CONTROL;
+  case XK_Alt_L:
+  case XK_Alt_R:
+  case XK_Meta_L:
+  case XK_Meta_R:
+  case XK_ISO_Level3_Shift:
+    return kVK_MENU;
+  default:
+    break;
   }
 
   if (ks >= XK_0 && ks <= XK_9)
@@ -105,15 +139,32 @@ bool KeysymToUTF8(unsigned long ks, char utf8[5])
   {
     switch (ks)
     {
-      case XK_KP_Space: cp = ' '; break;
-      case XK_KP_Multiply: cp = '*'; break;
-      case XK_KP_Add: cp = '+'; break;
-      case XK_KP_Subtract: cp = '-'; break;
-      case XK_KP_Decimal: cp = '.'; break;
-      case XK_KP_Divide: cp = '/'; break;
-      case XK_KP_Equal: cp = '='; break;
-      case XK_EuroSign: cp = 0x20ac; break;
-      default: break;
+    case XK_KP_Space:
+      cp = ' ';
+      break;
+    case XK_KP_Multiply:
+      cp = '*';
+      break;
+    case XK_KP_Add:
+      cp = '+';
+      break;
+    case XK_KP_Subtract:
+      cp = '-';
+      break;
+    case XK_KP_Decimal:
+      cp = '.';
+      break;
+    case XK_KP_Divide:
+      cp = '/';
+      break;
+    case XK_KP_Equal:
+      cp = '=';
+      break;
+    case XK_EuroSign:
+      cp = 0x20ac;
+      break;
+    default:
+      break;
     }
   }
 
