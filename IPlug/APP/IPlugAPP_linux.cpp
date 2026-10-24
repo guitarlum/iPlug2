@@ -74,8 +74,7 @@ void PrintApiDevices(FILE* out, const VoLumLinuxDriverChoice& choice)
       std::string rates;
       for (unsigned int sr : info.sampleRates)
         rates += (rates.empty() ? "" : ",") + std::to_string(sr);
-      std::fprintf(out, "  %s: in %u, out %u, rates %s\n", info.name.c_str(), info.inputChannels, info.outputChannels,
-                   rates.c_str());
+      std::fprintf(out, "  %s: in %u, out %u, rates %s\n", info.name.c_str(), info.inputChannels, info.outputChannels, rates.c_str());
     }
   }
   catch (RtAudioError& e)
@@ -102,11 +101,7 @@ bool IPlugAPPLinuxDriverLoads(uint32_t driverType)
   }
 }
 
-std::vector<VoLumLinuxDriverChoice> IPlugAPPLinuxDriverChoices()
-{
-  return VoLumLinuxDriverChoices(IPlugAPPLinuxDriverLoads(kVoLumLinuxDriverJack),
-                                 IPlugAPPLinuxDriverLoads(kVoLumLinuxDriverPulse));
-}
+std::vector<VoLumLinuxDriverChoice> IPlugAPPLinuxDriverChoices() { return VoLumLinuxDriverChoices(IPlugAPPLinuxDriverLoads(kVoLumLinuxDriverJack), IPlugAPPLinuxDriverLoads(kVoLumLinuxDriverPulse)); }
 
 unsigned long IPlugAPPLinuxXWindow(HWND hwnd)
 {

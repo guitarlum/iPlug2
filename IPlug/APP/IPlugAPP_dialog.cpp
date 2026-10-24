@@ -783,7 +783,13 @@ WDL_DLGRET IPlugAPPHost::MainDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPA
       return 0;
     case WM_CLOSE:
       DestroyWindow(hwndDlg);
+#ifdef OS_LINUX
+      // Handled: SWELL-GDK's close-button handler sends IDCANCEL to the window
+      // when WM_CLOSE returns 0, and the window is freed by now.
+      return 1;
+#else
       return 0;
+#endif
     case WM_COMMAND:
       switch (LOWORD(wParam))
       {
