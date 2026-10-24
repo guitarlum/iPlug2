@@ -17,6 +17,9 @@
 #include "pluginterfaces/vst/ivstmidicontrollers.h"
 
 #include "IPlugVST3.h"
+#if defined OS_LINUX
+#include "IPlugVST3_Linux.h"
+#endif
 
 using namespace iplug;
 using namespace Steinberg;
@@ -35,7 +38,12 @@ IPlugVST3::IPlugVST3(const InstanceInfo& info, const Config& config)
   CreateTimer();
 }
 
-IPlugVST3::~IPlugVST3() {}
+IPlugVST3::~IPlugVST3()
+{
+#if defined OS_LINUX
+  IPlugLinuxReleaseComponentContext(this);
+#endif
+}
 
 #pragma mark AudioEffect overrides
 
@@ -51,6 +59,9 @@ tresult PLUGIN_API IPlugVST3::initialize(FUnknown* context)
     IPlugVST3GetHost(this, context);
     OnHostIdentified();
     OnParamReset(kReset);
+#if defined OS_LINUX
+    iplug::IPlugLinuxAdoptComponentContext(this, context);
+#endif
     
     return kResultOk;
   }
@@ -62,6 +73,9 @@ tresult PLUGIN_API IPlugVST3::terminate()
 {
   TRACE
 
+#if defined OS_LINUX
+  iplug::IPlugLinuxReleaseComponentContext(this);
+#endif
   return SingleComponentEffect::terminate();
 }
 
@@ -138,11 +152,6 @@ tresult PLUGIN_API IPlugVST3::setParamNormalized(ParamID tag, ParamValue value)
 
 IPlugView* PLUGIN_API IPlugVST3::createView(const char* name)
 {
-#if defined(OS_LINUX) && defined(IPLUG_LINUX_EDITOR_STUB)
-  // IGraphicsLinux reports no window. Ticket 07 deletes IPLUG_LINUX_EDITOR_STUB.
-  (void)name;
-  return nullptr;
-#else
   if (HasUI() && name && strcmp(name, "editor") == 0)
   {
     mView = new ViewType(*this);
@@ -150,7 +159,6 @@ IPlugView* PLUGIN_API IPlugVST3::createView(const char* name)
   }
 
   return nullptr;
-#endif
 }
 
 tresult PLUGIN_API IPlugVST3::setEditorState(IBStream* pState)

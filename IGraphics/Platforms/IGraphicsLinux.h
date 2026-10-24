@@ -49,6 +49,13 @@ public:
   bool GetTextFromClipboard(WDL_String& str) override;
   bool SetTextInClipboard(const char* str) override { return false; } // TODO
   void* GetWindow() override;
+  ECursor SetMouseCursor(ECursor cursorType = ECursor::ARROW) override;
+  int XConnectionFd() const;
+  void PrepareToClose();
+  void DispatchPlatformEvents();
+  void OnDisplayTimer();
+  /** Host scale for the next OpenWindow. 0 clears a pending value. */
+  static void SetHostScaleForOpen(float scale);
   void GetMouseLocation(float& x, float& y) const override;
   void MoveMouseCursor(float x, float y) override;
   void PromptForDirectory(WDL_String& dir, IFileDialogCompletionHandlerFunc completionHandler) override;
@@ -61,6 +68,11 @@ public:
 protected:
   IPopupMenu* CreatePlatformPopupMenu(IPopupMenu& menu, const IRECT bounds, bool& isAsync) override;
   void CreatePlatformTextEntry(int paramIdx, const IText& text, const IRECT& bounds, int length, const char* str) override;
+  void DrawResize() override;
+
+private:
+  struct Platform;
+  Platform* mPlatform = nullptr;
 };
 
 END_IGRAPHICS_NAMESPACE

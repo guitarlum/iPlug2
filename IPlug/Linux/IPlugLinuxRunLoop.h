@@ -20,10 +20,11 @@
  * the VST3 editor adapts Steinberg IRunLoop (the X connection fd plus a
  * ~16 ms timer), and the standalone app drives the same callbacks itself.
  *
- * RegisterFd, RegisterTimer, and IPlugLinuxSetRunLoop run on the UI thread.
+ * Retain and release run on the UI thread. A timer stays on the loop it
+ * bound to, so closing one editor does not detach another editor's timers.
  * UnregisterTimer must be safe from inside its own callback. Timer::Create
- * binds here. A timer created before a loop is installed is kept and
- * attached when IPlugLinuxSetRunLoop gets one.
+ * binds here. A timer created before a loop is retained stays pending until
+ * one is. Debug builds assert that every bind stays on the first thread.
  */
 
 #include <stdint.h>
@@ -52,9 +53,49 @@ public:
   virtual void UnregisterTimer(uint32_t timerId) = 0;
 };
 
-/** Install or clear the process-wide loop. Pass nullptr to detach. */
+/**
+ * Retain a loop. The most recently retained loop receives new timers.
+ * The same pointer twice counts twice; release it twice.
+ */
+void IPlugLinuxRetainRunLoop(IPlugLinuxRunLoop* runLoop);
+/**
+ * Drop one retain. Timers bound to this loop move to the loop that remains.
+ * @return true when the last retain is gone.
+ */
+bool IPlugLinuxReleaseRunLoop(IPlugLinuxRunLoop* runLoop);
+
+/** Install or clear one loop. Other retained loops are left alone. */
 void IPlugLinuxSetRunLoop(IPlugLinuxRunLoop* runLoop);
 IPlugLinuxRunLoop* IPlugLinuxGetRunLoop();
+
+/** Debug builds assert that this is the thread that first bound the table. */
+void IPlugLinuxAssertUiThread();
+bool IPlugLinuxBindingsAreOnThisThread();
+
+/**
+ * poll() + timerfd loop for the standalone app. Ticket 10 drives it.
+ * UnregisterTimer is safe from inside that timer's callback.
+ */
+class IPlugLinuxPollRunLoop final : public IPlugLinuxRunLoop
+{
+public:
+  IPlugLinuxPollRunLoop();
+  ~IPlugLinuxPollRunLoop() override;
+  IPlugLinuxPollRunLoop(const IPlugLinuxPollRunLoop&) = delete;
+  IPlugLinuxPollRunLoop& operator=(const IPlugLinuxPollRunLoop&) = delete;
+
+  void RegisterFd(int fd, FdHandler handler, void* userData) override;
+  void UnregisterFd(int fd) override;
+  uint32_t RegisterTimer(uint32_t intervalMs, TimerHandler handler, void* userData) override;
+  void UnregisterTimer(uint32_t timerId) override;
+
+  /** Wait up to timeoutMs for fds and timers. Returns how many callbacks ran. */
+  int Poll(int timeoutMs);
+
+private:
+  struct Impl;
+  Impl* mImpl;
+};
 
 /**
  * Remember a timer and register it with the current loop when one exists.

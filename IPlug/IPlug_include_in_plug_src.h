@@ -100,6 +100,9 @@
 #elif defined VST3_API || VST3C_API || defined VST3P_API
   #include "public.sdk/source/main/pluginfactory.h"
   #include "pluginterfaces/vst/ivstcomponent.h"
+#if defined OS_LINUX
+  #include "IPlugVST3_Linux.h"
+#endif
   #include "pluginterfaces/vst/ivsteditcontroller.h"
 
 #if !defined VST3_PROCESSOR_UID && !defined VST3_CONTROLLER_UID
@@ -128,6 +131,9 @@
   // called after library is unloaded
   bool DeinitModule()
   {
+#if defined OS_LINUX
+    iplug::IPlugLinuxReleaseFactoryHostContext();
+#endif
     return true;
   }
   #endif
@@ -139,6 +145,18 @@
   }
 
   BEGIN_FACTORY_DEF(PLUG_MFR, PLUG_URL_STR, PLUG_EMAIL_STR)
+
+#if defined OS_LINUX
+  {
+    void* factoryInternal = nullptr;
+    if (gPluginFactory->queryInterface(Steinberg::IPluginFactoryInternal::iid, &factoryInternal) == Steinberg::kResultOk && factoryInternal)
+    {
+      auto* internal = static_cast<Steinberg::IPluginFactoryInternal*>(factoryInternal);
+      internal->addHostContextCallback(&iplug::IPlugLinuxOnFactoryHostContext);
+      internal->release();
+    }
+  }
+#endif
 
   DEF_CLASS2(INLINE_UID_FROM_FUID(FUID(VST3_PROCESSOR_UID)),
               Steinberg::PClassInfo::kManyInstances,          // cardinality

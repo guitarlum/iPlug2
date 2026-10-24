@@ -15,10 +15,19 @@
 
 #include "IPlugStructs.h"
 
+#if defined OS_LINUX
+#include "IGraphicsLinux.h"
+#include "IPlugVST3_Linux.h"
+#endif
+
 /** IPlug VST3 View  */
 template <class T>
 class IPlugVST3View : public Steinberg::CPluginView
                     , public Steinberg::IPlugViewContentScaleSupport
+#if defined OS_LINUX
+                    , public Steinberg::Linux::IEventHandler
+                    , public Steinberg::Linux::ITimerHandler
+#endif
 {
 public:
   IPlugVST3View(T& owner)
@@ -47,14 +56,8 @@ public:
       if (strcmp (type, Steinberg::kPlatformTypeNSView) == 0)
         return Steinberg::kResultTrue;
 #elif defined OS_LINUX
-#if defined(IPLUG_LINUX_EDITOR_STUB)
-      // No X11 window while IGraphicsLinux is the link stub. Ticket 07 deletes the macro.
-      (void)type;
-      return Steinberg::kResultFalse;
-#else
       if (strcmp(type, Steinberg::kPlatformTypeX11EmbedWindowID) == 0)
         return Steinberg::kResultTrue;
-#endif
 #endif
     }
     
@@ -128,17 +131,17 @@ public:
       else // Carbon
         return Steinberg::kResultFalse;
 #elif defined OS_LINUX
-#if defined(IPLUG_LINUX_EDITOR_STUB)
-      (void)pParent;
-      (void)type;
-      (void)pView;
-      return Steinberg::kNotImplemented;
-#else
       if (strcmp(type, Steinberg::kPlatformTypeX11EmbedWindowID) == 0)
+      {
+        if (mHaveHostScale)
+          iplug::igraphics::IGraphicsLinux::SetHostScaleForOpen(mHostScale);
         pView = mOwner.OpenWindow(pParent);
+        if (!pView)
+          return Steinberg::kResultFalse;
+        AttachLinuxRunLoop();
+      }
       if (!pView)
         return Steinberg::kResultFalse;
-#endif
 #endif
       return Steinberg::kResultTrue;
     }
@@ -148,6 +151,9 @@ public:
     
   Steinberg::tresult PLUGIN_API removed() override
   {
+#if defined OS_LINUX
+    DetachLinuxRunLoop();
+#endif
     if (mOwner.HasUI())
       mOwner.CloseWindow();
     
@@ -156,14 +162,50 @@ public:
 
   Steinberg::tresult PLUGIN_API setContentScaleFactor(ScaleFactor factor) override
   {
+#if defined OS_LINUX
+    mHostScale = factor;
+    mHaveHostScale = true;
+    if (auto* graphics = LinuxGraphics())
+    {
+      if (graphics->WindowIsOpen())
+        mOwner.SetScreenScale(factor);
+    }
+#else
     mOwner.SetScreenScale(factor);
+#endif
 
     return Steinberg::kResultOk;
   }
 
+#if defined OS_LINUX
+  void PLUGIN_API onFDIsSet(Steinberg::Linux::FileDescriptor) override
+  {
+    iplug::IPlugLinuxAssertUiThread();
+    if (auto* graphics = LinuxGraphics())
+    {
+      if (graphics->WindowIsOpen())
+        graphics->DispatchPlatformEvents();
+    }
+  }
+
+  void PLUGIN_API onTimer() override
+  {
+    iplug::IPlugLinuxAssertUiThread();
+    if (auto* graphics = LinuxGraphics())
+    {
+      if (graphics->WindowIsOpen())
+        graphics->OnDisplayTimer();
+    }
+  }
+#endif
+
   Steinberg::tresult PLUGIN_API queryInterface(const Steinberg::TUID _iid, void** obj) override
   {
     QUERY_INTERFACE(_iid, obj, IPlugViewContentScaleSupport::iid, IPlugViewContentScaleSupport)
+#if defined OS_LINUX
+    QUERY_INTERFACE(_iid, obj, Steinberg::Linux::IEventHandler::iid, Steinberg::Linux::IEventHandler)
+    QUERY_INTERFACE(_iid, obj, Steinberg::Linux::ITimerHandler::iid, Steinberg::Linux::ITimerHandler)
+#endif
     *obj = 0;
     return CPluginView::queryInterface(_iid, obj);
   }
@@ -318,4 +360,69 @@ public:
   }
 
   T& mOwner;
+
+#if defined OS_LINUX
+  iplug::igraphics::IGraphicsLinux* LinuxGraphics()
+  {
+    return dynamic_cast<iplug::igraphics::IGraphicsLinux*>(mOwner.GetUI());
+  }
+
+  void AttachLinuxRunLoop()
+  {
+    auto* graphics = LinuxGraphics();
+    if (!graphics || !plugFrame)
+      return;
+    const int fd = graphics->XConnectionFd();
+    if (fd < 0)
+      return;
+    mLinuxAdapter = iplug::IPlugLinuxVst3Adapter(plugFrame);
+    if (!mLinuxAdapter)
+      return;
+    iplug::IPlugLinuxRetainRunLoop(mLinuxAdapter);
+    mLinuxRetained = true;
+    Steinberg::Linux::IRunLoop* host = nullptr;
+    if (plugFrame->queryInterface(Steinberg::Linux::IRunLoop::iid, reinterpret_cast<void**>(&host)) == Steinberg::kResultOk && host &&
+        host->registerEventHandler(this, fd) == Steinberg::kResultOk && host->registerTimer(this, 16) == Steinberg::kResultOk)
+    {
+      mLinuxRunLoop = host;
+      return;
+    }
+    if (host)
+    {
+      host->unregisterEventHandler(this);
+      host->unregisterTimer(this);
+      host->release();
+    }
+    if (iplug::IPlugLinuxReleaseRunLoop(mLinuxAdapter))
+      iplug::IPlugLinuxDeleteVst3Adapter(mLinuxAdapter);
+    mLinuxAdapter = nullptr;
+    mLinuxRetained = false;
+  }
+
+  void DetachLinuxRunLoop()
+  {
+    if (auto* graphics = LinuxGraphics())
+      graphics->PrepareToClose();
+    if (mLinuxRunLoop)
+    {
+      mLinuxRunLoop->unregisterEventHandler(this);
+      mLinuxRunLoop->unregisterTimer(this);
+      mLinuxRunLoop->release();
+      mLinuxRunLoop = nullptr;
+    }
+    if (mLinuxRetained && mLinuxAdapter)
+    {
+      if (iplug::IPlugLinuxReleaseRunLoop(mLinuxAdapter))
+        iplug::IPlugLinuxDeleteVst3Adapter(mLinuxAdapter);
+    }
+    mLinuxAdapter = nullptr;
+    mLinuxRetained = false;
+  }
+
+  Steinberg::Linux::IRunLoop* mLinuxRunLoop = nullptr;
+  iplug::IPlugLinuxRunLoop* mLinuxAdapter = nullptr;
+  bool mLinuxRetained = false;
+  float mHostScale = 1.f;
+  bool mHaveHostScale = false;
+#endif
 };

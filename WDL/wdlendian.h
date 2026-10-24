@@ -73,10 +73,10 @@ typedef union { double f; WDL_UINT64   int64; } WDL_EndianDouble;
 #endif
 
 #ifndef EMSCRIPTEN
+#if defined(__linux__) || defined(__linux) || defined(linux)
 #if defined(__FLOAT_WORD_ORDER__) && __FLOAT_WORD_ORDER__ != __BYTE_ORDER__
   #error Unsupported float endian
-#elif !defined(__FLOAT_WORD_ORDER__) && !(defined(__linux__) || defined(__linux) || defined(linux))
-  #error Unsupported float endian
+#endif
 #endif
 #endif
 
