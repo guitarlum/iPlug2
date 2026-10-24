@@ -139,18 +139,22 @@ std::vector<std::string> ChildEnv()
 {
   std::vector<std::string> env;
   bool sawPath = false;
+  const char* realPath = std::getenv("PATH");
+  const std::string pathValue = gPathOverride.empty() || !realPath ? gPathOverride : gPathOverride + ":" + realPath;
   for (char** item = environ; item && *item; ++item)
   {
     std::string entry = *item;
     if (!gPathOverride.empty() && entry.rfind("PATH=", 0) == 0)
     {
-      entry = "PATH=" + gPathOverride;
+      // Keep the real PATH so a fake tool can call sleep and basename.
+      // Which() still searches only the override, so the real zenity is not used.
+      entry = "PATH=" + pathValue;
       sawPath = true;
     }
     env.push_back(std::move(entry));
   }
   if (!gPathOverride.empty() && !sawPath)
-    env.push_back("PATH=" + gPathOverride);
+    env.push_back("PATH=" + pathValue);
   return env;
 }
 
