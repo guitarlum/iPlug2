@@ -28,37 +28,37 @@
 #include <X11/Xutil.h>
 
 #ifdef None
-#undef None
+  #undef None
 #endif
 #ifdef Bool
-#undef Bool
+  #undef Bool
 #endif
 #ifdef Status
-#undef Status
+  #undef Status
 #endif
 #ifdef True
-#undef True
+  #undef True
 #endif
 #ifdef False
-#undef False
+  #undef False
 #endif
 #ifdef Success
-#undef Success
+  #undef Success
 #endif
 #ifdef Complex
-#undef Complex
+  #undef Complex
 #endif
 #ifdef Above
-#undef Above
+  #undef Above
 #endif
 #ifdef Below
-#undef Below
+  #undef Below
 #endif
 #ifdef Convex
-#undef Convex
+  #undef Convex
 #endif
 #ifdef CurrentTime
-#undef CurrentTime
+  #undef CurrentTime
 #endif
 
 BEGIN_IPLUG_NAMESPACE

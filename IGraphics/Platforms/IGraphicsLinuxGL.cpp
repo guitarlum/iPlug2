@@ -9,7 +9,7 @@
 */
 
 #if !defined(IGRAPHICS_GL2) && !defined(IGRAPHICS_GL3)
-#error IGraphicsLinuxGL.cpp requires IGRAPHICS_GL2 or IGRAPHICS_GL3
+  #error IGraphicsLinuxGL.cpp requires IGRAPHICS_GL2 or IGRAPHICS_GL3
 #endif
 
 // clang-format off
@@ -39,15 +39,7 @@ XVisualInfo* CreateGLContext(Display* display, void** glxContext)
   *glxContext = nullptr;
 
   int screen = DefaultScreen(display);
-  int attribs[] = {
-    GLX_RGBA,
-    GLX_DOUBLEBUFFER,
-    GLX_RED_SIZE, 8,
-    GLX_GREEN_SIZE, 8,
-    GLX_BLUE_SIZE, 8,
-    GLX_DEPTH_SIZE, 24,
-    0
-  };
+  int attribs[] = {GLX_RGBA, GLX_DOUBLEBUFFER, GLX_RED_SIZE, 8, GLX_GREEN_SIZE, 8, GLX_BLUE_SIZE, 8, GLX_DEPTH_SIZE, 24, 0};
 
   XVisualInfo* visual = glXChooseVisual(display, screen, attribs);
   if (!visual)
@@ -86,10 +78,7 @@ void DeactivateGLContext(Display* display)
   glXMakeCurrent(display, 0, nullptr);
 }
 
-bool LoadGL()
-{
-  return gladLoadGL() != 0;
-}
+bool LoadGL() { return gladLoadGL() != 0; }
 
 } // namespace igraphics
 } // namespace iplug

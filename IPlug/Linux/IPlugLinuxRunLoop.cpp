@@ -68,10 +68,7 @@ void IPlugLinuxSetRunLoop(IPlugLinuxRunLoop* runLoop)
   }
 }
 
-IPlugLinuxRunLoop* IPlugLinuxGetRunLoop()
-{
-  return State().runLoop;
-}
+IPlugLinuxRunLoop* IPlugLinuxGetRunLoop() { return State().runLoop; }
 
 uint32_t IPlugLinuxBindTimer(uint32_t intervalMs, IPlugLinuxRunLoop::TimerHandler handler, void* userData)
 {

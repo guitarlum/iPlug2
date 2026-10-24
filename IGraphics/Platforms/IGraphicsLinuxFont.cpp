@@ -35,7 +35,7 @@ constexpr int kFC_ResultMatch = 0;
 } // namespace
 
 LinuxFileFont::LinuxFileFont(const char* filePath, bool isSystem)
-: PlatformFont(isSystem)
+  : PlatformFont(isSystem)
 {
   if (filePath)
     mPath.Set(filePath);
@@ -74,16 +74,13 @@ IFontDataPtr LinuxFileFont::GetFontData()
 }
 
 LinuxMemFont::LinuxMemFont(const void* pData, int dataSize)
-: PlatformFont(false)
+  : PlatformFont(false)
 {
   if (pData && dataSize > 0)
     mData.Set(static_cast<const unsigned char*>(pData), dataSize);
 }
 
-IFontDataPtr LinuxMemFont::GetFontData()
-{
-  return IFontDataPtr(new IFontData(mData.Get(), mData.GetSize(), 0));
-}
+IFontDataPtr LinuxMemFont::GetFontData() { return IFontDataPtr(new IFontData(mData.Get(), mData.GetSize(), 0)); }
 
 Fontconfig* LoadFontconfig()
 {
@@ -97,11 +94,11 @@ Fontconfig* LoadFontconfig()
     return nullptr;
 
 #if defined(__clang__)
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wcast-function-type"
+  #pragma clang diagnostic push
+  #pragma clang diagnostic ignored "-Wcast-function-type"
 #elif defined(__GNUC__)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wcast-function-type"
+  #pragma GCC diagnostic push
+  #pragma GCC diagnostic ignored "-Wcast-function-type"
 #endif
   LOAD_FC_SYM(fc, PatternCreate);
   LOAD_FC_SYM(fc, PatternAddString);
@@ -112,9 +109,9 @@ Fontconfig* LoadFontconfig()
   LOAD_FC_SYM(fc, PatternDestroy);
   LOAD_FC_SYM(fc, PatternGetString);
 #if defined(__clang__)
-#pragma clang diagnostic pop
+  #pragma clang diagnostic pop
 #elif defined(__GNUC__)
-#pragma GCC diagnostic pop
+  #pragma GCC diagnostic pop
 #endif
 
   if (!fc.PatternCreate || !fc.FontMatch || !fc.PatternGetString)
