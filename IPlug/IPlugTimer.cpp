@@ -15,6 +15,10 @@
 
 #include "IPlugTimer.h"
 
+#if defined OS_LINUX
+#include "Linux/IPlugLinuxRunLoop.h"
+#endif
+
 using namespace iplug;
 
 #if defined OS_MAC || defined OS_IOS
@@ -143,4 +147,38 @@ void Timer_impl::TimerProc(void* userData)
   Timer_impl* itimer = (Timer_impl*) userData;
   itimer->mTimerFunc(*itimer);
 }
+#elif defined OS_LINUX
+
+Timer* Timer::Create(ITimerFunction func, uint32_t intervalMs)
+{
+  return new Timer_impl(func, intervalMs);
+}
+
+Timer_impl::Timer_impl(ITimerFunction func, uint32_t intervalMs)
+: mTimerFunc(func)
+{
+  mBindingId = IPlugLinuxBindTimer(intervalMs, &Timer_impl::OnRunLoop, this);
+}
+
+Timer_impl::~Timer_impl()
+{
+  Stop();
+}
+
+void Timer_impl::Stop()
+{
+  if (mBindingId)
+  {
+    IPlugLinuxUnbindTimer(mBindingId);
+    mBindingId = 0;
+  }
+}
+
+void Timer_impl::OnRunLoop(void* userData)
+{
+  Timer_impl* itimer = static_cast<Timer_impl*>(userData);
+  if (itimer->mTimerFunc)
+    itimer->mTimerFunc(*itimer);
+}
+
 #endif

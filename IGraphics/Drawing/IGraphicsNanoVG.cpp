@@ -8,6 +8,12 @@
  ==============================================================================
 */
 
+#if (defined(__linux__) || defined(__linux) || defined(linux)) && (defined(IGRAPHICS_GL2) || defined(IGRAPHICS_GL3))
+// glad before IGraphicsNanoVG.h: nanovg_gl_utils.h names GLuint, and glad must
+// win over a later GL/gl.h. Same GL2 loader Windows uses.
+#include <glad/glad.h>
+#endif
+
 #include <cmath>
 
 #include "IGraphicsNanoVG.h"
@@ -42,7 +48,13 @@
       #error Define either IGRAPHICS_GL2 or IGRAPHICS_GL3 when using IGRAPHICS_GL and IGRAPHICS_NANOVG with OS_WIN
     #endif
   #elif defined OS_LINUX
-    #error NOT IMPLEMENTED
+    #if defined IGRAPHICS_GL2
+      #define NANOVG_GL2_IMPLEMENTATION
+    #elif defined IGRAPHICS_GL3
+      #define NANOVG_GL3_IMPLEMENTATION
+    #else
+      #error "Define either IGRAPHICS_GL2 or IGRAPHICS_GL3 when using IGRAPHICS_NANOVG with OS_LINUX"
+    #endif
   #elif defined OS_WEB
     #if defined IGRAPHICS_GLES2
       #define NANOVG_GLES2_IMPLEMENTATION

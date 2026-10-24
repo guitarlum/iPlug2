@@ -22,15 +22,14 @@ class IGraphicsLinux final : public IGRAPHICS_DRAW_CLASS
 {
 public:
   IGraphicsLinux(IGEditorDelegate& dlg, int w, int h, int fps, float scale);
-  virtual ~IGraphicsLinux);
+  virtual ~IGraphicsLinux();
 
   void* OpenWindow(void* pWindow) override;
   void CloseWindow() override;
   bool WindowIsOpen() override;
   void PlatformResize(bool parentHasResized) override;
 
-  void HideMouseCursor() override;
-  void ShowMouseCursor() override;
+  void HideMouseCursor(bool hide, bool lock) override;
 
   EMsgBoxResult ShowMessageBox(const char* str, const char* caption, EMsgBoxType type, IMsgBoxCompletionHandlerFunc completionHandler) override;
   void ForceEndUserEdit() override;
@@ -40,8 +39,8 @@ public:
   void UpdateTooltips() override;
 
   bool RevealPathInExplorerOrFinder(WDL_String& path, bool select) override;
-  void PromptForFile(WDL_String& fileName, WDL_String& path, EFileAction action,  const char* ext, IColorPickerHandlerFunc func) override;
-  bool PromptForColor(IColor& color, const char* str) override;
+  void PromptForFile(WDL_String& fileName, WDL_String& path, EFileAction action, const char* ext, IFileDialogCompletionHandlerFunc completionHandler) override;
+  bool PromptForColor(IColor& color, const char* str, IColorPickerHandlerFunc func) override;
 
   bool OpenURL(const char* url, const char* msgWindowTitle, const char* confirmMsg, const char* errMsgOnFailure) override;
 
@@ -50,9 +49,9 @@ public:
   bool SetTextInClipboard(const char* str) override { return false; } // TODO
 
 protected:
-  IPopupMenu* CreatePlatformPopupMenu(const IPopupMenu& menu, IRECT& bounds) override;
+  IPopupMenu* CreatePlatformPopupMenu(IPopupMenu& menu, const IRECT bounds, bool& isAsync) override;
   void CreatePlatformTextEntry(int paramIdx, const IText& text, const IRECT& bounds, int length, const char* str) override;
-}
+};
 
 END_IGRAPHICS_NAMESPACE
 END_IPLUG_NAMESPACE

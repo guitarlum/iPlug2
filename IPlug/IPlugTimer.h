@@ -95,6 +95,20 @@ private:
   long ID = 0;
   ITimerFunction mTimerFunc;
 };
+#elif defined OS_LINUX
+/** UI-thread timer. Fires through IPlugLinuxRunLoop, not a private thread. */
+class Timer_impl : public Timer
+{
+public:
+  Timer_impl(ITimerFunction func, uint32_t intervalMs);
+  ~Timer_impl();
+  void Stop() override;
+
+private:
+  static void OnRunLoop(void* userData);
+  ITimerFunction mTimerFunc;
+  uint32_t mBindingId = 0;
+};
 #else
   #error NOT IMPLEMENTED
 #endif

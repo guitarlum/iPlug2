@@ -25,7 +25,9 @@
     #define OS_MAC
   #endif
 #elif defined __linux || defined __linux__ || defined linux
-  #define OS_LINUX
+  #ifndef OS_LINUX
+    #define OS_LINUX
+  #endif
 #elif defined EMSCRIPTEN
   #define OS_WEB
 #else
