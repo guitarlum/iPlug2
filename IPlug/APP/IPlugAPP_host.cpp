@@ -15,6 +15,7 @@
 #endif
 #if defined OS_LINUX
 #include <unistd.h>
+#include "IPlugAPP_linux.h"
 #endif
 
 #include <algorithm>
@@ -109,6 +110,23 @@ bool IPlugAPPHost::Init()
     
   if (!InitState())
     return false;
+
+#if defined OS_LINUX
+  {
+    std::string apis;
+    for (const auto& choice : IPlugAPPLinuxDriverChoices())
+      apis += (apis.empty() ? "" : ", ") + std::string(choice.label);
+    VOLUM_LOG("audio", "drivers: " + apis);
+
+    const uint32_t driver = VoLumLinuxStartupDriver(mState.mAudioDriverType, IPlugAPPLinuxDriverLoads(kDeviceJack),
+                                                    IPlugAPPLinuxDriverLoads(kDevicePulse));
+    if (driver != mState.mAudioDriverType)
+    {
+      VOLUM_LOG("audio", "the library of driver " + std::to_string(mState.mAudioDriverType) + " is missing; using ALSA");
+      mState.mAudioDriverType = driver;
+    }
+  }
+#endif
   
   if (!TryToChangeAudioDriverType()) // will init RTAudio with an API type based on gState->mAudioDriverType
   {
@@ -131,7 +149,15 @@ bool IPlugAPPHost::Init()
 
 bool IPlugAPPHost::OpenWindow(HWND pParent)
 {
+#if defined OS_LINUX
+  // IGraphicsLinux embeds into an X window, which is the SWELL window's GDK window.
+  const unsigned long xWindow = IPlugAPPLinuxXWindow(pParent);
+  if (!xWindow)
+    return false;
+  return mIPlug->OpenWindow(reinterpret_cast<void*>(xWindow)) != nullptr;
+#else
   return mIPlug->OpenWindow(pParent) != nullptr;
+#endif
 }
 
 void IPlugAPPHost::CloseWindow()
@@ -162,14 +188,11 @@ bool IPlugAPPHost::InitState()
   mINIPath.SetFormatted(MAX_PATH_LEN, "%s/Library/Application Support/%s/", getenv("HOME"), BUNDLE_NAME);
 #elif defined OS_LINUX
   {
-    const char* xdgData = std::getenv("XDG_DATA_HOME");
-    const char* home = std::getenv("HOME");
-    if (xdgData && *xdgData)
-      mINIPath.SetFormatted(MAX_PATH_LEN, "%s/%s/", xdgData, BUNDLE_NAME);
-    else if (home && *home)
-      mINIPath.SetFormatted(MAX_PATH_LEN, "%s/.local/share/%s/", home, BUNDLE_NAME);
-    else
+    // The library's folder (VoLumPaths.h LinuxVoLumDataDir), so settings.ini sits next to volum-settings.json.
+    const std::string dir = VoLumLinuxAppDataDir(std::getenv("XDG_DATA_HOME"), std::getenv("HOME"), BUNDLE_NAME);
+    if (dir.empty())
       return false;
+    mINIPath.Set(dir.c_str());
   }
 #else
   #error NOT IMPLEMENTED
@@ -1224,6 +1247,10 @@ bool IPlugAPPHost::InitAudio(uint32_t inId, uint32_t outId, uint32_t sr, uint32_
   RtAudio::StreamOptions options;
   options.flags = RTAUDIO_NONINTERLEAVED;
   // options.streamName = BUNDLE_NAME; // JACK stream name, not used on other streams
+#if defined OS_LINUX
+  // The JACK client and the PulseAudio application are named after the app, not "RtApiJack" / "RtAudio".
+  options.streamName = BUNDLE_NAME;
+#endif
 
   // VoLum: a rate the devices do not offer cannot open, and the failure that follows
   // is reported through a MessageBox that has nowhere to go during startup. This is

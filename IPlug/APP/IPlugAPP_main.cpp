@@ -360,146 +360,181 @@ INT_PTR SWELLAppMain(int msg, INT_PTR parm1, INT_PTR parm2)
 
 #pragma mark - LINUX
 #elif defined(OS_LINUX)
-
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <memory>
+#include <string>
 
-// Ticket 06: no editor window yet. --help prints usage. With no arguments the
-// process constructs the plugin and exits, which is enough to prove the binary
-// links and loads. Ticket 07 owns the real window loop (the SWELL sketch below
-// stays commented).
+#include "IPlugSWELL.h"
+#include "IPlugAPP_linux.h"
+#include "Linux/IPlugLinuxRunLoop.h"
+
+// swell-internal.h: the modal dialog whose loop owns the thread, if any.
+HWND DialogBoxIsActive();
+
 HWND gHWND = nullptr;
+
+namespace
+{
+// The longest the main loop sleeps, so SWELL's posted messages and timers and
+// GDK's events are serviced at least this often.
+constexpr int kMainLoopWaitMs = 10;
+// A SWELL timer that drives the editor's run loop while a SWELL modal loop
+// (Preferences, a message box) owns the thread instead of main().
+constexpr UINT_PTR kRunLoopPumpTimerID = 1002;
+
+IPlugLinuxPollRunLoop* gRunLoop = nullptr;
+bool gInRunLoop = false;
+HWND gCancelledModal = nullptr;
+
+void RunLoopOnce(int timeoutMs)
+{
+  if (!gRunLoop || gInRunLoop)
+    return;
+  gInRunLoop = true;
+  gRunLoop->RunOnce(timeoutMs);
+  gInRunLoop = false;
+}
+
+// A quit signal closes the main window the way its close button does, so the
+// plug-in and the audio stream tear down and write their settings. An open
+// modal dialog is cancelled first: destroying its owner from inside its loop
+// would leave that loop running against a deleted host.
+void ServiceQuitSignals(bool mayCloseMainWindow)
+{
+  HWND modal = DialogBoxIsActive();
+  switch (VoLumLinuxQuitStepFor(IPlugAPPLinuxQuitSignals(), modal != nullptr))
+  {
+  case VoLumLinuxQuitStep::CancelModal:
+    if (modal != gCancelledModal)
+    {
+      gCancelledModal = modal;
+      SendMessage(modal, WM_COMMAND, IDCANCEL, 0);
+    }
+    break;
+  case VoLumLinuxQuitStep::CloseMainWindow:
+    if (mayCloseMainWindow && gHWND)
+      SendMessage(gHWND, WM_CLOSE, 0, 0);
+    break;
+  default:
+    break;
+  }
+}
+
+void PumpRunLoop(HWND, UINT, UINT_PTR, DWORD)
+{
+  ServiceQuitSignals(false);
+  RunLoopOnce(0);
+}
+
+void PrintUsage()
+{
+  std::fputs("Usage: " BUNDLE_NAME " [option]\n"
+             "  --list-audio-devices  print the audio drivers, their devices and the MIDI inputs, then exit\n"
+             "  --preferences         open Preferences once the window is up\n"
+             "  --help                print this text\n"
+             "Settings and the library live in $XDG_DATA_HOME/" BUNDLE_NAME " (default ~/.local/share/" BUNDLE_NAME ").\n"
+             "SIGINT, SIGTERM and SIGHUP quit as the close button does; a second one leaves at once.\n",
+             stdout);
+}
+} // namespace
 
 int main(int argc, char** argv)
 {
+  bool openPreferences = false;
   for (int i = 1; i < argc; ++i)
   {
-    if (std::strcmp(argv[i], "--help") == 0 || std::strcmp(argv[i], "-h") == 0)
+    if (!std::strcmp(argv[i], "--help") || !std::strcmp(argv[i], "-h"))
     {
-      std::fputs("VoLum standalone (Linux).\n"
-                 "No editor window in this build.\n"
-                 "Usage: VoLum [--help]\n",
-                 stdout);
+      PrintUsage();
       return 0;
     }
+    if (!std::strcmp(argv[i], "--list-audio-devices"))
+    {
+      IPlugAPPLinuxPrintDevices(stdout);
+      return 0;
+    }
+    if (!std::strcmp(argv[i], "--preferences"))
+      openPreferences = true;
   }
 
-  IPlugAPPHost::Create();
-  IPlugAPPHost::sInstance.reset();
+  IPlugAPPLinuxInstallQuitSignals();
+
+  // SWELL keeps its own options next to settings.ini rather than in ~/.libSwell.ini.
+  static const std::string swellIni = [] {
+    const std::string dir = VoLumLinuxAppDataDir(std::getenv("XDG_DATA_HOME"), std::getenv("HOME"), BUNDLE_NAME);
+    return dir.empty() ? dir : dir + "libSwell.ini";
+  }();
+  SWELL_ExtendedAPI("APPNAME", (void*) BUNDLE_NAME);
+  if (!swellIni.empty())
+    SWELL_ExtendedAPI("INIFILE", (void*) swellIni.c_str());
+  SWELL_initargs(&argc, &argv);
+  SWELL_Internal_PostMessage_Init();
+  const int gdkFd = IPlugAPPLinuxGdkConnectionFd();
+  if (gdkFd < 0)
+  {
+    std::fputs(BUNDLE_NAME ": cannot open the X display (DISPLAY is unset or unreachable)\n", stderr);
+    return 1;
+  }
+
+  // Every IPlug timer and the editor's X connection bind to this loop.
+  auto runLoop = std::make_unique<IPlugLinuxPollRunLoop>();
+  gRunLoop = runLoop.get();
+  IPlugLinuxPushedRunLoop pushedRunLoop(std::move(runLoop));
+
+  IPlugAPPHost* pAppHost = IPlugAPPHost::Create();
+  pAppHost->Init();
+  pAppHost->TryToChangeAudio();
+
+  CreateDialog(NULL, MAKEINTRESOURCE(IDD_DIALOG_MAIN), NULL, IPlugAPPHost::MainDlgProc);
+
+  // Wakes the wait below when GDK has events for the SWELL windows.
+  gRunLoop->RegisterFd(gdkFd, [](int, void*) {}, nullptr);
+
+  if (gHWND)
+  {
+    SetTimer(gHWND, kRunLoopPumpTimerID, kMainLoopWaitMs, PumpRunLoop);
+    if (openPreferences)
+      PostMessage(gHWND, WM_COMMAND, ID_PREFERENCES, 0);
+  }
+  else
+  {
+    std::fputs(BUNDLE_NAME ": could not create the main window\n", stderr);
+  }
+
+  while (gHWND)
+  {
+    ServiceQuitSignals(true);
+    SWELL_RunMessageLoop();
+    if (gHWND)
+      RunLoopOnce(kMainLoopWaitMs);
+  }
+
+  // WM_DESTROY released the host, which wrote settings.ini and the plug-in's
+  // settings. It is still here only if the window never opened.
+  IPlugAPPHost::sInstance = nullptr;
+  gRunLoop->UnregisterFd(gdkFd);
+  gRunLoop = nullptr;
+  pushedRunLoop.Reset();
+
+  // As on Windows, nothing of ours is left to run, and the atexit handlers and
+  // static destructors of the audio, GL and GDK libraries are best skipped.
+  std::fflush(nullptr);
+  VoLumExitProcessNow(0);
+}
+
+INT_PTR SWELLAppMain(int msg, INT_PTR parm1, INT_PTR parm2)
+{
   return 0;
 }
 
-//#include <IPlugSWELL.h>
-//#include "swell-internal.h" // fixes problem with HWND forward decl
-//
-//HWND gHWND;
-//UINT gScrollMessage;
-//extern HMENU SWELL_app_stocksysmenu;
-//
-//int main(int argc, char **argv)
-//{
-//  SWELL_initargs(&argc, &argv);
-//  SWELL_Internal_PostMessage_Init();
-//  SWELL_ExtendedAPI("APPNAME", (void*) "IGraphics Test");
-//
-//  HMENU menu = LoadMenu(NULL, MAKEINTRESOURCE(IDR_MENU1));
-//  CreateDialog(gHINSTANCE, MAKEINTRESOURCE(IDD_DIALOG_MAIN), NULL, MainDlgProc);
-//  SetMenu(gHWND, menu);
-//
-//  while (!gHWND->m_hashaddestroy)
-//  {
-//    SWELL_RunMessageLoop();
-//    Sleep(10);
-//  };
-//
-//  if (gHWND)
-//    DestroyWindow(gHWND);
-//
-//  return 0;
-//}
-//
-//INT_PTR SWELLAppMain(int msg, INT_PTR parm1, INT_PTR parm2)
-//{
-//  switch (msg)
-//  {
-//    case SWELLAPP_ONLOAD:
-//      break;
-//    case SWELLAPP_LOADED:
-//    {
-//      HMENU menu = SWELL_GetCurrentMenu();
-//
-//      if (menu)
-//      {
-//        // work on a new menu
-//        menu = SWELL_DuplicateMenu(menu);
-//        HMENU src = LoadMenu(NULL, MAKEINTRESOURCE(IDR_MENU1));
-//
-//        for (auto x = 0; x < GetMenuItemCount(src)-1; x++)
-//        {
-//          HMENU sm = GetSubMenu(src,x);
-//          if (sm)
-//          {
-//            char str[1024];
-//            MENUITEMINFO mii = {sizeof(mii), MIIM_TYPE};
-//            mii.dwTypeData = str;
-//            mii.cch = sizeof(str);
-//            str[0] = 0;
-//            GetMenuItemInfo(src, x, TRUE, &mii);
-//            MENUITEMINFO mi= {sizeof(mi), MIIM_STATE|MIIM_SUBMENU|MIIM_TYPE,MFT_STRING, 0, 0, SWELL_DuplicateMenu(sm), NULL, NULL, 0, str};
-//            InsertMenuItem(menu, x+1, TRUE, &mi);
-//          }
-//        }
-//      }
-//
-//      if (menu)
-//      {
-//        HMENU sm = GetSubMenu(menu, 1);
-//        DeleteMenu(sm, ID_QUIT, MF_BYCOMMAND); // remove QUIT from our file menu, since it is in the system menu on OSX
-//        DeleteMenu(sm, ID_PREFERENCES, MF_BYCOMMAND); // remove PREFERENCES from the file menu, since it is in the system menu on OSX
-//
-//        // remove any trailing separators
-//        int a = GetMenuItemCount(sm);
-//
-//        while (a > 0 && GetMenuItemID(sm, a-1) == 0)
-//          DeleteMenu(sm, --a, MF_BYPOSITION);
-//
-//        DeleteMenu(menu, 1, MF_BYPOSITION); // delete file menu
-//      }
-//
-//      // if we want to set any default modifiers for items in the menus, we can use:
-//      // SetMenuItemModifier(menu,commandID,MF_BYCOMMAND,'A',FCONTROL) etc.
-//
-//      HWND hwnd = CreateDialog(gHINST,MAKEINTRESOURCE(IDD_DIALOG_MAIN), NULL, MainDlgProc);
-//
-//      if (menu)
-//      {
-//        SetMenu(hwnd, menu); // set the menu for the dialog to our menu (on Windows that menu is set from the .rc, but on SWELL
-//        SWELL_SetDefaultModalWindowMenu(menu); // other windows will get the stock (bundle) menus
-//      }
-//
-//      break;
-//    }
-//    case SWELLAPP_ONCOMMAND:
-//      // this is to catch commands coming from the system menu etc
-//      if (gHWND && (parm1&0xffff))
-//        SendMessage(gHWND, WM_COMMAND, parm1 & 0xffff, 0);
-//      break;
-//    case SWELLAPP_DESTROY:
-//      if (gHWND)
-//        DestroyWindow(gHWND);
-//      break;
-//    case SWELLAPP_PROCESSMESSAGE: // can hook keyboard input here
-//      // parm1 = (MSG*), should we want it -- look in swell.h to see what the return values refer to
-//      break;
-//  }
-//  return 0;
-//}
-//
-//#define CBS_HASSTRINGS 0
-//#define SWELL_DLG_SCALE_AUTOGEN 1
-//#define SET_IDD_DIALOG_PREF_SCALE 1.5
-//#include "swell-dlggen.h"
-//#include "resources/main.rc_mac_dlg"
-//#include "swell-menugen.h"
-//#include "resources/main.rc_mac_menu"
+#define CBS_HASSTRINGS 0
+#define SWELL_DLG_SCALE_AUTOGEN 1
+#define SET_IDD_DIALOG_PREF_SCALE 1.5
+#if PLUG_HOST_RESIZE
+#define SWELL_DLG_FLAGS_AUTOGEN SWELL_DLG_WS_FLIPPED|SWELL_DLG_WS_RESIZABLE
+#endif
+#include "swell-dlggen.h"
+#include "resources/main.rc_mac_dlg"
 #endif

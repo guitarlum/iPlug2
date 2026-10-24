@@ -63,6 +63,19 @@ bool IPlugAPP::EditorResize(int viewWidth, int viewHeight)
     
     SetWindowPos(gHWND, 0, rcWindow.left, rcWindow.bottom - viewHeight - ptDiff.y, viewWidth + ptDiff.x, viewHeight + ptDiff.y, 0);
     parentResized = true;
+    #elif defined OS_LINUX
+    // The editor is an X child of the SWELL window, which follows it here; the
+    // window's WM_SIZE then reaches the editor at the size it already has.
+    if (gHWND)
+    {
+      RECT rcClient, rcWindow;
+      GetClientRect(gHWND, &rcClient);
+      GetWindowRect(gHWND, &rcWindow);
+      const int frameX = (rcWindow.right - rcWindow.left) - rcClient.right;
+      const int frameY = (rcWindow.bottom - rcWindow.top) - rcClient.bottom;
+      SetWindowPos(gHWND, 0, 0, 0, viewWidth + frameX, viewHeight + frameY, SWP_NOMOVE | SWP_NOZORDER);
+      parentResized = true;
+    }
     #endif
     
     SetEditorSize(viewWidth, viewHeight);

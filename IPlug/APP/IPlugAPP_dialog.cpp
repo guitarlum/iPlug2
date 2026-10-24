@@ -20,6 +20,10 @@
 #elif defined OS_MAC || defined OS_LINUX
 #define GET_MENU() SWELL_GetCurrentMenu()
 #endif
+#if defined OS_LINUX
+#include "IPlugAPP_linux.h"
+#include "VoLumDiagLog.h"
+#endif
 
 using namespace iplug;
 
@@ -325,10 +329,21 @@ void IPlugAPPHost::PopulatePreferencesDialog(HWND hwndDlg)
 #elif defined OS_LINUX
 void IPlugAPPHost::PopulatePreferencesDialog(HWND hwndDlg)
 {
-  SendDlgItemMessage(hwndDlg,IDC_COMBO_AUDIO_DRIVER,CB_ADDSTRING,0,(LPARAM)"ALSA");
-  SendDlgItemMessage(hwndDlg,IDC_COMBO_AUDIO_DRIVER,CB_ADDSTRING,0,(LPARAM)"JACK");
-  SendDlgItemMessage(hwndDlg,IDC_COMBO_AUDIO_DRIVER,CB_ADDSTRING,0,(LPARAM)"PulseAudio");
-  SendDlgItemMessage(hwndDlg,IDC_COMBO_AUDIO_DRIVER,CB_SETCURSEL, mState.mAudioDriverType, 0);
+  // Only the drivers whose library loads. Each entry carries its driver type,
+  // since a missing JACK moves PulseAudio to the second position.
+  const auto choices = IPlugAPPLinuxDriverChoices();
+  std::string listed;
+  for (const auto& choice : choices)
+  {
+    const LRESULT idx = SendDlgItemMessage(hwndDlg, IDC_COMBO_AUDIO_DRIVER, CB_ADDSTRING, 0, (LPARAM) choice.label);
+    SendDlgItemMessage(hwndDlg, IDC_COMBO_AUDIO_DRIVER, CB_SETITEMDATA, idx, (LPARAM) choice.driverType);
+    listed += (listed.empty() ? "" : ", ") + std::string(choice.label);
+  }
+  VOLUM_LOG("audio", "Preferences drivers: " + listed);
+  SendDlgItemMessage(hwndDlg, IDC_COMBO_AUDIO_DRIVER, CB_SETCURSEL, VoLumLinuxDriverComboIndex(choices, mState.mAudioDriverType), 0);
+
+  // There is no system audio control panel to open.
+  EnableWindow(GetDlgItem(hwndDlg, IDC_BUTTON_OS_DEV_SETTINGS), FALSE);
 
   PopulateAudioDialogs(hwndDlg);
   PopulateMidiDialogs(hwndDlg);
@@ -419,7 +434,11 @@ WDL_DLGRET IPlugAPPHost::PreferencesDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wPar
           if (audioPlan.restartOnOK)
           {
             _this->TryToChangeAudio(true);
+#if defined OS_LINUX
+            ReportSampleRateSubstitution(hwndDlg, _this, false); // kDeviceJack shares kDeviceASIO's number
+#else
             ReportSampleRateSubstitution(hwndDlg, _this, _this->mState.mAudioDriverType == kDeviceASIO);
+#endif
           }
           if (_this->GetMIDIPortNumber(ERoute::kInput, mState.mMidiInDev.Get(), mState.mMidiInDevNameIsStable) > 0
               && _this->mMidiIn && !_this->mMidiIn->isPortOpen())
@@ -436,7 +455,11 @@ WDL_DLGRET IPlugAPPHost::PreferencesDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wPar
           // VoLum: the driver has the last word on the sample rate, so show what it
           // actually opened at rather than leaving the requested rate on screen.
           _this->PopulateAudioDialogs(hwndDlg);
+#if defined OS_LINUX
+          ReportSampleRateSubstitution(hwndDlg, _this, false);
+#else
           ReportSampleRateSubstitution(hwndDlg, _this, _this->mState.mAudioDriverType == kDeviceASIO);
+#endif
           break;
         case IDCANCEL:
         {
@@ -470,6 +493,9 @@ WDL_DLGRET IPlugAPPHost::PreferencesDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wPar
           if (HIWORD(wParam) == CBN_SELCHANGE)
           {
             v = (int) SendDlgItemMessage(hwndDlg, IDC_COMBO_AUDIO_DRIVER, CB_GETCURSEL, 0, 0);
+#if defined OS_LINUX
+            v = (int) SendDlgItemMessage(hwndDlg, IDC_COMBO_AUDIO_DRIVER, CB_GETITEMDATA, v, 0);
+#endif
 
             if(v != mState.mAudioDriverType)
             {
@@ -478,7 +504,11 @@ WDL_DLGRET IPlugAPPHost::PreferencesDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wPar
               if (!_this->TryToChangeAudioDriverType())
               {
                 _this->RestoreActiveAudioStateAfterFailure("Audio driver is not available. Reverting to the previous working settings.");
+#if defined OS_LINUX
+                SendDlgItemMessage(hwndDlg, IDC_COMBO_AUDIO_DRIVER, CB_SETCURSEL, VoLumLinuxDriverComboIndex(IPlugAPPLinuxDriverChoices(), mState.mAudioDriverType), 0);
+#else
                 SendDlgItemMessage(hwndDlg, IDC_COMBO_AUDIO_DRIVER, CB_SETCURSEL, mState.mAudioDriverType, 0);
+#endif
                 _this->PopulateAudioDialogs(hwndDlg);
                 break;
               }
@@ -487,7 +517,11 @@ WDL_DLGRET IPlugAPPHost::PreferencesDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wPar
               if (!_this->mAudioInputDevs.size() && !_this->mAudioOutputDevs.size())
               {
                 _this->RestoreActiveAudioStateAfterFailure("No audio devices are available for this driver. Reverting to the previous working settings.");
+#if defined OS_LINUX
+                SendDlgItemMessage(hwndDlg, IDC_COMBO_AUDIO_DRIVER, CB_SETCURSEL, VoLumLinuxDriverComboIndex(IPlugAPPLinuxDriverChoices(), mState.mAudioDriverType), 0);
+#else
                 SendDlgItemMessage(hwndDlg, IDC_COMBO_AUDIO_DRIVER, CB_SETCURSEL, mState.mAudioDriverType, 0);
+#endif
                 _this->PopulateAudioDialogs(hwndDlg);
                 break;
               }
@@ -696,8 +730,10 @@ WDL_DLGRET IPlugAPPHost::MainDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPA
       gHWND = hwndDlg;
       IPlugAPP* pPlug = pAppHost->GetPlug();
 
+#ifndef OS_LINUX
       if (!pAppHost->OpenWindow(gHWND))
         DBGMSG("couldn't attach gui\n");
+#endif
 
       width = pPlug->GetEditorWidth();
       height = pPlug->GetEditorHeight();
@@ -708,6 +744,13 @@ WDL_DLGRET IPlugAPPHost::MainDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPA
       VoLumApplyDarkCaption(hwndDlg);
 #endif
       ShowWindow(hwndDlg, SW_SHOW);
+
+#ifdef OS_LINUX
+      // SWELL creates the GDK window when the dialog is shown, and the editor is
+      // an X child of that window, so the editor opens after ShowWindow.
+      if (!pAppHost->OpenWindow(gHWND))
+        DBGMSG("couldn't attach gui\n");
+#endif
 
       // VoLum: drives IPlugAPPHost::PollAudioStatus - reports a startup audio failure
       // that had no window to appear in, and reopens the stream when the driver changes
@@ -732,9 +775,7 @@ WDL_DLGRET IPlugAPPHost::MainDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPA
       #ifdef OS_WIN
       PostQuitMessage(0);
       #elif defined OS_LINUX
-      // SWELL_PostQuitMessage is declared only for SWELL_TARGET_OSX.
-      // Ticket 07's window loop quits itself. This stub has no message loop.
-      (void)hwndDlg;
+      // main() leaves its loop once gHWND is NULL (SWELL_PostQuitMessage is macOS only).
       #else
       SWELL_PostQuitMessage(hwndDlg);
       #endif
