@@ -2137,7 +2137,12 @@ void IGraphics::ApplyLayerDropShadow(ILayerPtr& layer, const IShadow& shadow)
   kernel.Resize(iSize);
         
   for (int i = 0; i < iSize; i++)
+#if defined(__linux__)
+    // libstdc++ on Ubuntu 22.04 (GCC 12) does not put expf in namespace std.
+    kernel.Get()[i] = static_cast<uint8_t>(std::round(255.f * ::expf(-(i * i) * blurConst)));
+#else
     kernel.Get()[i] = static_cast<uint8_t>(std::round(255.f * std::expf(-(i * i) * blurConst)));
+#endif
   
   // Kernel normalisation
   int normFactor = kernel.Get()[0];

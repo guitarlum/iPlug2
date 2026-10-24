@@ -461,7 +461,12 @@ struct IColor
     };
 
     IColor col;
+#if defined(__linux__)
+    // libstdc++ on Ubuntu 22.04 (GCC 12) does not put fmodf in namespace std.
+    h = ::fmodf(h, 1.0f);
+#else
     h = std::fmodf(h, 1.0f);
+#endif
     if (h < 0.0f) h += 1.0f;
     s = Clip(s, 0.0f, 1.0f);
     l = Clip(l, 0.0f, 1.0f);
