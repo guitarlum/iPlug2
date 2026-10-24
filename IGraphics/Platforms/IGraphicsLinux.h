@@ -49,6 +49,7 @@ public:
   bool GetTextFromClipboard(WDL_String& str) override;
   bool SetTextInClipboard(const char* str) override { return false; } // TODO
   void* GetWindow() override;
+  void GetMouseLocation(float& x, float& y) const override;
   void MoveMouseCursor(float x, float y) override;
   void PromptForDirectory(WDL_String& dir, IFileDialogCompletionHandlerFunc completionHandler) override;
 

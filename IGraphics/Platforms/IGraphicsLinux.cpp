@@ -43,6 +43,12 @@ void* IGraphicsLinux::GetWindow()
   return nullptr;
 }
 
+void IGraphicsLinux::GetMouseLocation(float& x, float& y) const
+{
+  x = 0.f;
+  y = 0.f;
+}
+
 void IGraphicsLinux::PlatformResize(bool) {}
 
 void IGraphicsLinux::HideMouseCursor(bool, bool) {}
