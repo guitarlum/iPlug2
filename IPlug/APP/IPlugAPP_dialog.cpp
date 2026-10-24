@@ -731,6 +731,10 @@ WDL_DLGRET IPlugAPPHost::MainDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPA
       
       #ifdef OS_WIN
       PostQuitMessage(0);
+      #elif defined OS_LINUX
+      // SWELL_PostQuitMessage is declared only for SWELL_TARGET_OSX.
+      // Ticket 07's window loop quits itself. This stub has no message loop.
+      (void)hwndDlg;
       #else
       SWELL_PostQuitMessage(hwndDlg);
       #endif
