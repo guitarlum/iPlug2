@@ -73,9 +73,11 @@ typedef union { double f; WDL_UINT64   int64; } WDL_EndianDouble;
 #endif
 
 #ifndef EMSCRIPTEN
-  #if __FLOAT_WORD_ORDER__ != __BYTE_ORDER__
-    #error Unsupported float endian
-  #endif
+#if defined(__FLOAT_WORD_ORDER__) && __FLOAT_WORD_ORDER__ != __BYTE_ORDER__
+  #error Unsupported float endian
+#elif !defined(__FLOAT_WORD_ORDER__) && !(defined(__linux__) || defined(__linux) || defined(linux))
+  #error Unsupported float endian
+#endif
 #endif
 
 // GNU C, Intel C++
@@ -128,10 +130,10 @@ typedef union { double f; WDL_UINT64   int64; } WDL_EndianDouble;
 
 // Linux
 #elif defined(__linux) || defined(__linux__) || defined(linux)
-#include <endian.h>
-#define WDL_bswap16(x) bswap16(x)
-#define WDL_bswap32(x) bswap32(x)
-#define WDL_bswap64(x) bswap64(x)
+#include <byteswap.h>
+#define WDL_bswap16(x) bswap_16(x)
+#define WDL_bswap32(x) bswap_32(x)
+#define WDL_bswap64(x) bswap_64(x)
 
 #endif // WDL_bswapXX
 
