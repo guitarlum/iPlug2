@@ -227,6 +227,7 @@ struct IGraphicsLinux::Platform
   bool inUpdate = false;
   bool glLoaded = false;
   bool needsPaint = false;
+  bool layoutDone = false;
   bool cursorHidden = false;
   ECursor cursor = ECursor::ARROW;
   bool cursorLocked = false;
@@ -264,7 +265,7 @@ struct IGraphicsLinux::Platform
 
   void Paint()
   {
-    if (!open || !view)
+    if (!open || !view || !layoutDone)
       return;
     // pugl has already made the GL context current for PUGL_EXPOSE.
     // Enter again so this instance is current even if a sibling drew last.
@@ -279,8 +280,19 @@ struct IGraphicsLinux::Platform
 
   void OnRealize()
   {
-    inGlEvent = true;
+    // Only load GL here. Layout runs after puglRealize returns so it is not
+    // re-entered from the X callback.
     puglEnterContext(view);
+    if (!glLoaded)
+      glLoaded = LoadGL();
+  }
+
+  void FinishOpen()
+  {
+    if (!view || layoutDone)
+      return;
+    puglEnterContext(view);
+    inGlEvent = true;
     if (!glLoaded)
       glLoaded = LoadGL();
     self->OnViewInitialized(nullptr);
@@ -288,7 +300,9 @@ struct IGraphicsLinux::Platform
     self->GetDelegate()->LayoutUI(self);
     self->SetAllControlsDirty();
     needsPaint = true;
+    layoutDone = true;
     inGlEvent = false;
+    puglLeaveContext(view);
   }
 
   void OnKey(const PuglKeyEvent& key, bool down)
@@ -341,6 +355,8 @@ struct IGraphicsLinux::Platform
         break;
       case PUGL_EXPOSE: Paint(); break;
       case PUGL_BUTTON_PRESS:
+        if (!layoutDone)
+          break;
       case PUGL_BUTTON_RELEASE:
       {
         const PuglButtonEvent& button = event->button;
@@ -381,6 +397,8 @@ struct IGraphicsLinux::Platform
         break;
       }
       case PUGL_MOTION:
+        if (!layoutDone)
+          break;
       {
         const PuglMotionEvent& motion = event->motion;
         const float previousX = mouseX;
@@ -406,6 +424,8 @@ struct IGraphicsLinux::Platform
         break;
       }
       case PUGL_SCROLL:
+        if (!layoutDone)
+          break;
       {
         const PuglScrollEvent& scroll = event->scroll;
         float x = 0.f;
@@ -422,11 +442,26 @@ struct IGraphicsLinux::Platform
         self->OnMouseWheel(x, y, MouseMod(scroll.state, (buttons & 1) != 0, (buttons & 2) != 0), delta);
         break;
       }
-      case PUGL_KEY_PRESS: OnKey(event->key, true); break;
-      case PUGL_KEY_RELEASE: OnKey(event->key, false); break;
-      case PUGL_TEXT: OnText(event->text); break;
-      case PUGL_POINTER_OUT: self->OnMouseOut(); break;
-      case PUGL_POINTER_IN: self->OnSetCursor(); break;
+      case PUGL_KEY_PRESS:
+        if (layoutDone)
+          OnKey(event->key, true);
+        break;
+      case PUGL_KEY_RELEASE:
+        if (layoutDone)
+          OnKey(event->key, false);
+        break;
+      case PUGL_TEXT:
+        if (layoutDone)
+          OnText(event->text);
+        break;
+      case PUGL_POINTER_OUT:
+        if (layoutDone)
+          self->OnMouseOut();
+        break;
+      case PUGL_POINTER_IN:
+        if (layoutDone)
+          self->OnSetCursor();
+        break;
       default: break;
     }
     return PUGL_SUCCESS;
@@ -535,6 +570,7 @@ void* IGraphicsLinux::OpenWindow(void* pParent)
     return nullptr;
   }
 
+  mPlatform->FinishOpen();
   puglShow(mPlatform->view, PUGL_SHOW_PASSIVE);
   mPlatform->native = reinterpret_cast<void*>(static_cast<uintptr_t>(puglGetNativeView(mPlatform->view)));
   puglObscureView(mPlatform->view);
