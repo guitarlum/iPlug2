@@ -215,6 +215,8 @@ void IPlugLinuxUnbindFd(uint32_t bindingId)
     Unbind(bindingId);
 }
 
+void IPlugLinuxCheckUIThread(const char* function) { CheckThread(function); }
+
 bool IPlugLinuxIsUIThread()
 {
   const Registry& r = State();

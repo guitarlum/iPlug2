@@ -113,6 +113,13 @@ private:
   std::unique_ptr<IPlugLinuxRunLoop> mRunLoop;
 };
 
+/**
+ * The registry's own check, for other UI-thread-only entry points (the
+ * IGraphicsLinux window and run-loop callbacks): asserts in Debug, and counts
+ * and logs "<function> called off the UI thread" in every build.
+ */
+void IPlugLinuxCheckUIThread(const char* function);
+
 /** True on the thread that first called into the run-loop registry. */
 bool IPlugLinuxIsUIThread();
 /** Registry calls made from any other thread since the process started. */

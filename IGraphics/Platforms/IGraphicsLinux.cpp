@@ -121,6 +121,7 @@ int IGraphicsLinux::XErrorCount() { return sXErrorCount; }
 
 void* IGraphicsLinux::OpenWindow(void* pParent)
 {
+  IPlugLinuxCheckUIThread("IGraphicsLinux::OpenWindow");
   CloseWindow();
 
   mDisplay = XOpenDisplay(nullptr);
@@ -169,6 +170,7 @@ void* IGraphicsLinux::OpenWindow(void* pParent)
 
 void IGraphicsLinux::CloseWindow()
 {
+  IPlugLinuxCheckUIThread("IGraphicsLinux::CloseWindow");
   // Unbind first: after this no run-loop callback can reach X or GL.
   IPlugLinuxUnbindTimer(mTimerBinding);
   IPlugLinuxUnbindFd(mFdBinding);
@@ -272,7 +274,6 @@ void IGraphicsLinux::DestroyGLWindow()
     glXDestroyContext(mDisplay, mGLContext);
     mGLContext = nullptr;
   }
-  mGLDepth = 0;
   FreeCursors();
   if (mPlugWnd)
     XDestroyWindow(mDisplay, mPlugWnd);
@@ -339,26 +340,27 @@ void IGraphicsLinux::DrawResize()
 
 void IGraphicsLinux::ActivateGLContext()
 {
-  if (!mGLContext)
-    return;
-  if (mGLDepth++ == 0)
+  if (mGLNesting.Enter(mGLContext != nullptr))
   {
     mPrevContext = glXGetCurrentContext();
     mPrevDisplay = glXGetCurrentDisplay();
     mPrevDrawable = glXGetCurrentDrawable();
     mPrevReadable = glXGetCurrentReadDrawable();
   }
-  glXMakeCurrent(mDisplay, mPlugWnd, mGLContext);
+  if (mGLContext)
+    glXMakeCurrent(mDisplay, mPlugWnd, mGLContext);
 }
 
 void IGraphicsLinux::DeactivateGLContext()
 {
-  if (!mGLContext || mGLDepth == 0 || --mGLDepth > 0)
+  // Balances even when a re-entrant CloseWindow destroyed the context inside
+  // this scope; DestroyGLWindow has already released it then.
+  if (!mGLNesting.Leave())
     return;
   // Hand the thread back to whatever context the host (or another editor) had current.
   if (mPrevContext && mPrevContext != mGLContext)
     glXMakeContextCurrent(mPrevDisplay, mPrevDrawable, mPrevReadable, mPrevContext);
-  else if (!mPrevContext)
+  else if (!mPrevContext && mGLContext)
     glXMakeCurrent(mDisplay, kNone, nullptr);
 }
 
@@ -366,6 +368,7 @@ void IGraphicsLinux::DeactivateGLContext()
 
 void IGraphicsLinux::ProcessX11Events()
 {
+  IPlugLinuxCheckUIThread("IGraphicsLinux::ProcessX11Events");
   if (!mDisplay)
     return;
   ActivateGLContext(); // input handlers may load bitmaps or fonts
@@ -380,6 +383,7 @@ void IGraphicsLinux::ProcessX11Events()
 
 void IGraphicsLinux::OnDisplayTimer()
 {
+  IPlugLinuxCheckUIThread("IGraphicsLinux::OnDisplayTimer");
   ProcessX11Events();
   if (!mPlugWnd)
     return;
@@ -397,10 +401,12 @@ void IGraphicsLinux::OnDisplayTimer()
     }
     SetAllControlsClean();
     Draw(rects);
-    glXSwapBuffers(mDisplay, mPlugWnd);
+    if (mPlugWnd) // a control may have closed the editor while drawing
+      glXSwapBuffers(mDisplay, mPlugWnd);
   }
   DeactivateGLContext();
-  XFlush(mDisplay);
+  if (mDisplay)
+    XFlush(mDisplay);
 }
 
 void IGraphicsLinux::DispatchEvent(void* pEvent)

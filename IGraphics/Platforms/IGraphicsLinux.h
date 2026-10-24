@@ -12,6 +12,7 @@
 
 #include "IPlugPlatform.h"
 
+#include "IGraphicsLinuxGLNesting.h"
 #include "IGraphics_select.h"
 
 // Xlib stays out of this header: its None/Bool/Status macros would leak into
@@ -100,7 +101,7 @@ private:
   __GLXcontextRec* mGLContext = nullptr;
 
   // ActivateGLContext saves whatever was current; DeactivateGLContext restores it.
-  int mGLDepth = 0;
+  IGraphicsLinuxGLNesting mGLNesting;
   _XDisplay* mPrevDisplay = nullptr;
   unsigned long mPrevDrawable = 0;
   unsigned long mPrevReadable = 0;
