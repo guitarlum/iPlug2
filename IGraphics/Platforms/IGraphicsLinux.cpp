@@ -16,6 +16,7 @@
 // Undef X11 Bool/None/Status before any IGraphics or pugl header sees them.
 #include "IGraphicsLinuxGL.h"
 #include "IGraphicsLinux.h"
+#include "IGraphicsLinuxFont.h"
 #include "Linux/IPlugLinuxRunLoop.h"
 
 #define PUGL_NO_INCLUDE_GL_H
@@ -227,6 +228,7 @@ struct IGraphicsLinux::Platform
   bool glLoaded = false;
   bool needsPaint = false;
   bool cursorHidden = false;
+  ECursor cursor = ECursor::ARROW;
   bool cursorLocked = false;
   float mouseX = 0.f;
   float mouseY = 0.f;
@@ -533,7 +535,7 @@ void* IGraphicsLinux::OpenWindow(void* pParent)
     return nullptr;
   }
 
-  puglShow(mPlatform->view, true);
+  puglShow(mPlatform->view, PUGL_SHOW_PASSIVE);
   mPlatform->native = reinterpret_cast<void*>(static_cast<uintptr_t>(puglGetNativeView(mPlatform->view)));
   puglObscureView(mPlatform->view);
   DispatchPlatformEvents();
@@ -672,7 +674,7 @@ void IGraphicsLinux::HideMouseCursor(bool hide, bool lock)
   }
   else
   {
-    puglSetCursor(mPlatform->view, ToPuglCursor(mCursorType));
+    puglSetCursor(mPlatform->view, ToPuglCursor(mPlatform->cursor));
   }
 
   if (lock && hide && display && window && !mPlatform->cursorLocked)
@@ -690,6 +692,8 @@ void IGraphicsLinux::HideMouseCursor(bool hide, bool lock)
 ECursor IGraphicsLinux::SetMouseCursor(ECursor cursorType)
 {
   const ECursor previous = IGraphics::SetMouseCursor(cursorType);
+  if (mPlatform)
+    mPlatform->cursor = cursorType;
   if (mPlatform && mPlatform->view && mPlatform->open && !mPlatform->cursorHidden)
     puglSetCursor(mPlatform->view, ToPuglCursor(cursorType));
   return previous;
