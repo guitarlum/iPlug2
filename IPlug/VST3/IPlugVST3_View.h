@@ -47,8 +47,14 @@ public:
       if (strcmp (type, Steinberg::kPlatformTypeNSView) == 0)
         return Steinberg::kResultTrue;
 #elif defined OS_LINUX
+#if defined(IPLUG_LINUX_EDITOR_STUB)
+      // No X11 window while IGraphicsLinux is the link stub. Ticket 07 deletes the macro.
+      (void)type;
+      return Steinberg::kResultFalse;
+#else
       if (strcmp(type, Steinberg::kPlatformTypeX11EmbedWindowID) == 0)
         return Steinberg::kResultTrue;
+#endif
 #endif
     }
     
@@ -122,10 +128,17 @@ public:
       else // Carbon
         return Steinberg::kResultFalse;
 #elif defined OS_LINUX
+#if defined(IPLUG_LINUX_EDITOR_STUB)
+      (void)pParent;
+      (void)type;
+      (void)pView;
+      return Steinberg::kNotImplemented;
+#else
       if (strcmp(type, Steinberg::kPlatformTypeX11EmbedWindowID) == 0)
         pView = mOwner.OpenWindow(pParent);
       if (!pView)
         return Steinberg::kResultFalse;
+#endif
 #endif
       return Steinberg::kResultTrue;
     }
