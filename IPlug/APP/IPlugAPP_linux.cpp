@@ -12,8 +12,12 @@
 
 #include <dlfcn.h>
 #include <signal.h>
+#include <time.h>
 #include <unistd.h>
 
+#include <cmath>
+#include <cstdlib>
+#include <cstring>
 #include <string>
 
 #include "IPlugAPP_host.h"
@@ -161,6 +165,85 @@ void IPlugAPPLinuxPrintDevices(FILE* out)
   {
     std::fprintf(out, "  (unavailable: %s)\n", e.getMessage().c_str());
   }
+}
+
+bool IPlugAPPLinuxGateTone(double* output, int channels, uint32_t frames, double sampleRate, unsigned int status,
+                           double streamTime)
+{
+  // Decided once. A normal launch pays one getenv, then this returns false
+  // without touching the buffer.
+  static int decided = 0;
+  static int enabled = 0;
+  static int mute = 0;
+  static int drop = 0;
+  static unsigned dropAt = 400;
+  static unsigned seen = 0;
+  static double phase = 0.0;
+  static double lastMono = -1.0;
+  if (!decided)
+  {
+    decided = 1;
+    const char* env = std::getenv("VOLUM_LINUX_GATE_TONE");
+    enabled = env && env[0] ? 1 : 0;
+    if (enabled)
+    {
+      mute = std::strcmp(env, "mute") == 0;
+      drop = std::strcmp(env, "drop") == 0;
+      if (const char* at = std::getenv("VOLUM_LINUX_GATE_DROP_AT"))
+      {
+        const int n = std::atoi(at);
+        if (n > 0)
+          dropAt = static_cast<unsigned>(n);
+      }
+      std::fprintf(stderr, "gate-tone mode=%s amp_dbfs=-24\n", mute ? "mute" : (drop ? "drop" : "sine"));
+      std::fflush(stderr);
+    }
+  }
+  if (!enabled)
+    return false;
+  if (!output || channels <= 0 || frames == 0)
+    return true;
+
+  const double rate = sampleRate > 1.0 ? sampleRate : 48000.0;
+  struct timespec ts;
+  if (clock_gettime(CLOCK_MONOTONIC, &ts) == 0)
+  {
+    const double now = static_cast<double>(ts.tv_sec) + static_cast<double>(ts.tv_nsec) * 1e-9;
+    // pa_simple_write blocks for about one period. A gap past 50 ms is a stall,
+    // not that wait. Short dropouts are measured on the recording instead.
+    if (lastMono >= 0.0 && now - lastMono > 0.050)
+    {
+      std::fprintf(stderr, "gate-xrun gap_s=%.4f stream_time=%.3f\n", now - lastMono, streamTime);
+      std::fflush(stderr);
+    }
+    lastMono = now;
+  }
+  if (status != 0)
+  {
+    std::fprintf(stderr, "gate-xrun status=%u stream_time=%.3f\n", status, streamTime);
+    std::fflush(stderr);
+  }
+
+  const bool hole = drop && seen == dropAt;
+  if (hole)
+  {
+    std::fprintf(stderr, "gate-drop callback=%u\n", seen);
+    std::fflush(stderr);
+  }
+  constexpr double kAmp = 0.063095734448; // -24 dBFS
+  constexpr double kTwoPi = 6.28318530717958647692;
+  const double step = kTwoPi * 440.0 / rate;
+  for (uint32_t i = 0; i < frames; ++i)
+  {
+    const double s = (mute || hole) ? 0.0 : kAmp * std::sin(phase);
+    phase += step;
+    if (phase > kTwoPi)
+      phase -= kTwoPi;
+    for (int c = 0; c < channels; ++c)
+      output[static_cast<size_t>(c) * frames + i] = s;
+  }
+  ++seen;
+  return true;
 }
 
 END_IPLUG_NAMESPACE

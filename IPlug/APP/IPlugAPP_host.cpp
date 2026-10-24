@@ -1448,6 +1448,13 @@ int IPlugAPPHost::AudioCallback(void* pOutputBuffer, void* pInputBuffer, uint32_
   if (devOuts <= 0 || pOutputBufferD == nullptr)
     return 0;
 
+#if defined OS_LINUX
+  // Gate tone replaces the plug-in output. Skipping the plug-in is what keeps a
+  // hardware loopback of this output from feeding the amp.
+  if (IPlugAPPLinuxGateTone(pOutputBufferD, devOuts, nFrames, _this->mSampleRate, status, streamTime))
+    return 0;
+#endif
+
   // 0-based device offsets selected by the user in the Audio Settings dialog.
   // Defensive clamp: if any offset got out of range vs. the channel count we
   // actually opened with, snap it back into range here so later strided

@@ -53,4 +53,11 @@ int IPlugAPPLinuxQuitSignals();
  * devices, the drivers whose library is missing, and the RtMidi ALSA inputs. */
 void IPlugAPPLinuxPrintDevices(FILE* out);
 
+/** Real-device gate only. When VOLUM_LINUX_GATE_TONE is set, write this
+ *  callback's output (a -24 dBFS 440 Hz sine, silence, or one zeroed buffer)
+ *  and return true so the plug-in does not run: a hardware loopback of the
+ *  output must not feed the amp. Unset or empty, return false and write nothing. */
+bool IPlugAPPLinuxGateTone(double* output, int channels, uint32_t frames, double sampleRate, unsigned int status,
+                           double streamTime);
+
 END_IPLUG_NAMESPACE
