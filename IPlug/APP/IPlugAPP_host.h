@@ -60,6 +60,10 @@
   #define DEFAULT_OUTPUT_DEV "Built-in Output"
 #elif defined(OS_LINUX)
   #include "IPlugSWELL.h"
+  #include <unistd.h>
+  #define SLEEP( milliseconds ) usleep( (unsigned long) (milliseconds * 1000.0) )
+  #define DEFAULT_INPUT_DEV "default"
+  #define DEFAULT_OUTPUT_DEV "default"
 #endif
 
 #include "RtAudio.h"
@@ -74,6 +78,7 @@ BEGIN_IPLUG_NAMESPACE
 
 const int kDeviceDS = 0; const int kDeviceCoreAudio = 0; const int kDeviceAlsa = 0;
 const int kDeviceASIO = 1; const int kDeviceJack = 1;
+const int kDevicePulse = 2;
 extern UINT gSCROLLMSG;
 
 class IPlugAPP;

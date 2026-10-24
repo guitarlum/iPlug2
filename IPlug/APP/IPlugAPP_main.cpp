@@ -360,6 +360,35 @@ INT_PTR SWELLAppMain(int msg, INT_PTR parm1, INT_PTR parm2)
 
 #pragma mark - LINUX
 #elif defined(OS_LINUX)
+
+#include <cstdio>
+#include <cstring>
+
+// Ticket 06: no editor window yet. --help prints usage. With no arguments the
+// process constructs the plugin and exits, which is enough to prove the binary
+// links and loads. Ticket 07 owns the real window loop (the SWELL sketch below
+// stays commented).
+HWND gHWND = nullptr;
+
+int main(int argc, char** argv)
+{
+  for (int i = 1; i < argc; ++i)
+  {
+    if (std::strcmp(argv[i], "--help") == 0 || std::strcmp(argv[i], "-h") == 0)
+    {
+      std::fputs("VoLum standalone (Linux).\n"
+                 "No editor window in this build.\n"
+                 "Usage: VoLum [--help]\n",
+                 stdout);
+      return 0;
+    }
+  }
+
+  IPlugAPPHost::Create();
+  IPlugAPPHost::sInstance.reset();
+  return 0;
+}
+
 //#include <IPlugSWELL.h>
 //#include "swell-internal.h" // fixes problem with HWND forward decl
 //

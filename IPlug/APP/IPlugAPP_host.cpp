@@ -10,8 +10,11 @@
 
 #include "IPlugAPP_host.h"
 
-#ifdef OS_WIN
+#if defined OS_WIN || defined OS_LINUX
 #include <sys/stat.h>
+#endif
+#if defined OS_LINUX
+#include <unistd.h>
 #endif
 
 #include <algorithm>
@@ -157,6 +160,17 @@ bool IPlugAPPHost::InitState()
   }
 #elif defined OS_MAC
   mINIPath.SetFormatted(MAX_PATH_LEN, "%s/Library/Application Support/%s/", getenv("HOME"), BUNDLE_NAME);
+#elif defined OS_LINUX
+  {
+    const char* xdgData = std::getenv("XDG_DATA_HOME");
+    const char* home = std::getenv("HOME");
+    if (xdgData && *xdgData)
+      mINIPath.SetFormatted(MAX_PATH_LEN, "%s/%s/", xdgData, BUNDLE_NAME);
+    else if (home && *home)
+      mINIPath.SetFormatted(MAX_PATH_LEN, "%s/.local/share/%s/", home, BUNDLE_NAME);
+    else
+      return false;
+  }
 #else
   #error NOT IMPLEMENTED
 #endif
@@ -260,6 +274,24 @@ bool IPlugAPPHost::InitState()
       mState.mMidiInDevNameIsStable = true;
       mState.mMidiOutDevNameIsStable = true;
       UpdateINI(); // will write file if doesn't exist
+    }
+    else
+    {
+      return false;
+    }
+#elif defined OS_LINUX
+    mode_t process_mask = umask(0);
+    int result_code = mkdir(mINIPath.Get(), S_IRWXU | S_IRWXG | S_IRWXO);
+    umask(process_mask);
+
+    if(!result_code)
+    {
+      mINIPath.Append("settings.ini");
+      mLegacyMidiInDev.Set(OFF_TEXT);
+      mLegacyMidiOutDev.Set(OFF_TEXT);
+      mState.mMidiInDevNameIsStable = true;
+      mState.mMidiOutDevNameIsStable = true;
+      UpdateINI();
     }
     else
     {
@@ -682,6 +714,13 @@ bool IPlugAPPHost::TryToChangeAudioDriverType()
       mDAC = std::make_unique<RtAudio>(RtAudio::MACOSX_CORE);
     //else
     //mDAC = std::make_unique<RtAudio>(RtAudio::UNIX_JACK);
+#elif defined OS_LINUX
+    if(mState.mAudioDriverType == kDeviceJack)
+      mDAC = std::make_unique<RtAudio>(RtAudio::UNIX_JACK);
+    else if(mState.mAudioDriverType == kDevicePulse)
+      mDAC = std::make_unique<RtAudio>(RtAudio::LINUX_PULSE);
+    else
+      mDAC = std::make_unique<RtAudio>(RtAudio::LINUX_ALSA);
 #else
   #error NOT IMPLEMENTED
 #endif
@@ -710,6 +749,8 @@ bool IPlugAPPHost::TryToChangeAudio(bool explicitUserChange)
   else
     inputID = GetAudioDeviceIdx(mState.mAudioInDev.Get(), ERoute::kInput);
 #elif defined OS_MAC
+  inputID = GetAudioDeviceIdx(mState.mAudioInDev.Get(), ERoute::kInput);
+#elif defined OS_LINUX
   inputID = GetAudioDeviceIdx(mState.mAudioInDev.Get(), ERoute::kInput);
 #else
   #error NOT IMPLEMENTED
@@ -967,7 +1008,7 @@ bool IPlugAPPHost::SelectMIDIDevice(ERoute direction, const char* pPortName, boo
         mState.mMidiInDevNameIsStable = nameIsStable;
         return true;
       }
-  #if defined OS_WIN
+  #if defined OS_WIN || defined OS_LINUX
       else
       {
         const bool opened = openOrTurnOff([&] { mMidiIn->openPort(port-1); });
@@ -1018,7 +1059,7 @@ bool IPlugAPPHost::SelectMIDIDevice(ERoute direction, const char* pPortName, boo
         mState.mMidiOutDevNameIsStable = nameIsStable;
         return true;
       }
-#if defined OS_WIN
+#if defined OS_WIN || defined OS_LINUX
       else
       {
         const bool opened = openOrTurnOff([&] { mMidiOut->openPort(port-1); });

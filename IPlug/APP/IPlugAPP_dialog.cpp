@@ -17,7 +17,7 @@
 #include <shellapi.h>
 #include "VoLumWinChrome.h"
 #define GET_MENU() GetMenu(gHWND)
-#elif defined OS_MAC
+#elif defined OS_MAC || defined OS_LINUX
 #define GET_MENU() SWELL_GetCurrentMenu()
 #endif
 
@@ -322,6 +322,17 @@ void IPlugAPPHost::PopulatePreferencesDialog(HWND hwndDlg)
   PopulateAudioDialogs(hwndDlg);
   PopulateMidiDialogs(hwndDlg);
 }
+#elif defined OS_LINUX
+void IPlugAPPHost::PopulatePreferencesDialog(HWND hwndDlg)
+{
+  SendDlgItemMessage(hwndDlg,IDC_COMBO_AUDIO_DRIVER,CB_ADDSTRING,0,(LPARAM)"ALSA");
+  SendDlgItemMessage(hwndDlg,IDC_COMBO_AUDIO_DRIVER,CB_ADDSTRING,0,(LPARAM)"JACK");
+  SendDlgItemMessage(hwndDlg,IDC_COMBO_AUDIO_DRIVER,CB_ADDSTRING,0,(LPARAM)"PulseAudio");
+  SendDlgItemMessage(hwndDlg,IDC_COMBO_AUDIO_DRIVER,CB_SETCURSEL, mState.mAudioDriverType, 0);
+
+  PopulateAudioDialogs(hwndDlg);
+  PopulateMidiDialogs(hwndDlg);
+}
 #else
   #error NOT IMPLEMENTED
 #endif
@@ -598,6 +609,7 @@ WDL_DLGRET IPlugAPPHost::PreferencesDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wPar
             } else {
               system("open \"/Applications/Utilities/Audio MIDI Setup.app\"");
             }
+            #elif defined OS_LINUX
             #else
               #error NOT IMPLEMENTED
             #endif
