@@ -69,6 +69,12 @@
 #include "RtAudio.h"
 #include "RtMidi.h"
 
+#if defined(OS_LINUX) && defined(__RTAUDIO_DUMMY__)
+  // RtApiStream's layout follows the API macros. RtAudio.cpp has them, so this
+  // file must too, or the host corrupts the stream it shares with the driver.
+  #error "Define __LINUX_ALSA__, __UNIX_JACK__ and __LINUX_PULSE__ for every file that includes RtAudio.h"
+#endif
+
 #define OFF_TEXT "off"
 
 extern HWND gHWND;
