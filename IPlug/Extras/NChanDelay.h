@@ -33,7 +33,9 @@ public:
 
   void ClearBuffer()
   {
-    memset(mBuffer.Get(), 0, mNInChans * mDTSamples * sizeof(T));
+    // A zero latency leaves the buffer unallocated; memset on its null pointer is undefined.
+    if (mBuffer.GetSize() > 0)
+      memset(mBuffer.Get(), 0, mNInChans * mDTSamples * sizeof(T));
   }
 
   void ProcessBlock(T** inputs, T** outputs, int nFrames)
