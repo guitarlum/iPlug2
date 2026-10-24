@@ -32,6 +32,8 @@
 
 #include <stdint.h>
 
+#include <memory>
+#include <utility>
 #include <vector>
 
 #include "../IPlugPlatform.h"
@@ -76,6 +78,40 @@ void IPlugLinuxUnbindTimer(uint32_t bindingId);
 /** As IPlugLinuxBindTimer, for a readable file descriptor. */
 uint32_t IPlugLinuxBindFd(int fd, IPlugLinuxRunLoop::FdHandler handler, void* userData);
 void IPlugLinuxUnbindFd(uint32_t bindingId);
+
+/** Owns a loop while it is on the stack: pushed on construction, popped by Reset() or the destructor. */
+class IPlugLinuxPushedRunLoop
+{
+public:
+  IPlugLinuxPushedRunLoop() = default;
+  explicit IPlugLinuxPushedRunLoop(std::unique_ptr<IPlugLinuxRunLoop> runLoop)
+    : mRunLoop(std::move(runLoop))
+  {
+    IPlugLinuxAddRunLoop(mRunLoop.get());
+  }
+  ~IPlugLinuxPushedRunLoop() { Reset(); }
+  IPlugLinuxPushedRunLoop(const IPlugLinuxPushedRunLoop&) = delete;
+  IPlugLinuxPushedRunLoop& operator=(const IPlugLinuxPushedRunLoop&) = delete;
+  IPlugLinuxPushedRunLoop& operator=(IPlugLinuxPushedRunLoop&& other) noexcept
+  {
+    Reset();
+    mRunLoop = std::move(other.mRunLoop);
+    return *this;
+  }
+
+  explicit operator bool() const { return mRunLoop != nullptr; }
+
+  void Reset()
+  {
+    if (!mRunLoop)
+      return;
+    IPlugLinuxRemoveRunLoop(mRunLoop.get());
+    mRunLoop.reset();
+  }
+
+private:
+  std::unique_ptr<IPlugLinuxRunLoop> mRunLoop;
+};
 
 /** True on the thread that first called into the run-loop registry. */
 bool IPlugLinuxIsUIThread();

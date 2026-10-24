@@ -35,12 +35,7 @@ IPlugVST3::IPlugVST3(const InstanceInfo& info, const Config& config)
   CreateTimer();
 }
 
-IPlugVST3::~IPlugVST3()
-{
-#ifdef OS_LINUX
-  DetachHostRunLoop();
-#endif
-}
+IPlugVST3::~IPlugVST3() {}
 
 #pragma mark AudioEffect overrides
 
@@ -62,10 +57,10 @@ tresult PLUGIN_API IPlugVST3::initialize(FUnknown* context)
     // host passed to IPluginFactory3::setHostContext (via Steinberg::Timer).
     if (!mHostRunLoop)
     {
-      mHostRunLoop = IPlugVST3RunLoop::Query(context);
-      if (!mHostRunLoop)
-        mHostRunLoop = IPlugVST3FactoryTimers::Create();
-      IPlugLinuxAddRunLoop(mHostRunLoop.get());
+      std::unique_ptr<IPlugLinuxRunLoop> runLoop = IPlugVST3RunLoop::Query(context);
+      if (!runLoop)
+        runLoop = IPlugVST3FactoryTimers::Create();
+      mHostRunLoop = IPlugLinuxPushedRunLoop(std::move(runLoop));
     }
 #endif
     
@@ -80,21 +75,11 @@ tresult PLUGIN_API IPlugVST3::terminate()
   TRACE
 
 #ifdef OS_LINUX
-  DetachHostRunLoop();
+  mHostRunLoop.Reset();
 #endif
 
   return SingleComponentEffect::terminate();
 }
-
-#ifdef OS_LINUX
-void IPlugVST3::DetachHostRunLoop()
-{
-  if (!mHostRunLoop)
-    return;
-  IPlugLinuxRemoveRunLoop(mHostRunLoop.get());
-  mHostRunLoop.reset();
-}
-#endif
 
 tresult PLUGIN_API IPlugVST3::setBusArrangements(SpeakerArrangement* pInputBusArrangements, int32 numInBuses, SpeakerArrangement* pOutputBusArrangements, int32 numOutBuses)
 {

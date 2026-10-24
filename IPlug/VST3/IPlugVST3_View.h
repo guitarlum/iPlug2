@@ -34,10 +34,10 @@ public:
   ~IPlugVST3View()
   {
 #ifdef OS_LINUX
-    if (mFrameRunLoop)
+    if (mFrameRunLoop) // destroyed without removed()
     {
       mOwner.CloseWindow();
-      DetachFrameRunLoop();
+      mFrameRunLoop.Reset();
     }
 #endif
     mOwner.release();
@@ -138,15 +138,15 @@ public:
       // gives the editor no UI-thread callbacks, so it is refused.
       if (strcmp(type, Steinberg::kPlatformTypeX11EmbedWindowID) != 0 || mFrameRunLoop)
         return Steinberg::kResultFalse;
-      mFrameRunLoop = iplug::IPlugVST3RunLoop::Query(plugFrame);
-      if (!mFrameRunLoop)
+      std::unique_ptr<iplug::IPlugLinuxRunLoop> frameRunLoop = iplug::IPlugVST3RunLoop::Query(plugFrame);
+      if (!frameRunLoop)
         return Steinberg::kResultFalse;
-      iplug::IPlugLinuxAddRunLoop(mFrameRunLoop.get());
+      mFrameRunLoop = iplug::IPlugLinuxPushedRunLoop(std::move(frameRunLoop));
       pView = mOwner.OpenWindow(pParent);
       if (!pView)
       {
         mOwner.CloseWindow();
-        DetachFrameRunLoop();
+        mFrameRunLoop.Reset();
         return Steinberg::kResultFalse;
       }
       if (mHostScale > 0.f)
@@ -163,7 +163,7 @@ public:
     if (mOwner.HasUI())
       mOwner.CloseWindow();
 #ifdef OS_LINUX
-    DetachFrameRunLoop();
+    mFrameRunLoop.Reset();
 #endif
     
     return CPluginView::removed();
@@ -339,15 +339,7 @@ public:
 
 #ifdef OS_LINUX
 private:
-  void DetachFrameRunLoop()
-  {
-    if (!mFrameRunLoop)
-      return;
-    iplug::IPlugLinuxRemoveRunLoop(mFrameRunLoop.get());
-    mFrameRunLoop.reset();
-  }
-
-  std::unique_ptr<iplug::IPlugVST3RunLoop> mFrameRunLoop;
+  iplug::IPlugLinuxPushedRunLoop mFrameRunLoop;
   float mHostScale = 0.f;
 #endif
 };

@@ -174,8 +174,7 @@ public:
 private:
   ViewType* mView;
 #ifdef OS_LINUX
-  void DetachHostRunLoop();
-  std::unique_ptr<IPlugLinuxRunLoop> mHostRunLoop;
+  IPlugLinuxPushedRunLoop mHostRunLoop; // popped before IPlugAPIBase destroys its timer
 #endif
 };
 
