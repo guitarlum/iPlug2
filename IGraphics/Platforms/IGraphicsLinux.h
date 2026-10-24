@@ -10,6 +10,7 @@
 
 #pragma once
 
+#include "IPlugPlatform.h"
 #include "IGraphics_select.h"
 
 BEGIN_IPLUG_NAMESPACE

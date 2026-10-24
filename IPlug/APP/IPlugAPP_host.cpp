@@ -255,7 +255,7 @@ bool IPlugAPPHost::InitState()
     mState.mMidiInDevNameIsStable = true;
     mState.mMidiOutDevNameIsStable = true;
     UpdateINI(); // will write file if doesn't exist
-#elif defined OS_MAC
+#elif defined OS_MAC || defined OS_LINUX
     mode_t process_mask = umask(0);
     int result_code = mkdir(mINIPath.Get(), S_IRWXU | S_IRWXG | S_IRWXO);
     umask(process_mask);
@@ -274,24 +274,6 @@ bool IPlugAPPHost::InitState()
       mState.mMidiInDevNameIsStable = true;
       mState.mMidiOutDevNameIsStable = true;
       UpdateINI(); // will write file if doesn't exist
-    }
-    else
-    {
-      return false;
-    }
-#elif defined OS_LINUX
-    mode_t process_mask = umask(0);
-    int result_code = mkdir(mINIPath.Get(), S_IRWXU | S_IRWXG | S_IRWXO);
-    umask(process_mask);
-
-    if(!result_code)
-    {
-      mINIPath.Append("settings.ini");
-      mLegacyMidiInDev.Set(OFF_TEXT);
-      mLegacyMidiOutDev.Set(OFF_TEXT);
-      mState.mMidiInDevNameIsStable = true;
-      mState.mMidiOutDevNameIsStable = true;
-      UpdateINI();
     }
     else
     {
