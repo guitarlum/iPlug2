@@ -36,8 +36,48 @@ using namespace igraphics;
 namespace
 {
 
+Display* gDisplays[8] = {};
+int gDisplayCount = 0;
+int (*gPreviousXError)(Display*, XErrorEvent*) = nullptr;
+
+bool DisplayIsOurs(Display* display)
+{
+  for (int i = 0; i < gDisplayCount; ++i)
+  {
+    if (gDisplays[i] == display)
+      return true;
+  }
+  return false;
+}
+
+void TrackDisplay(Display* display, bool add)
+{
+  if (!display)
+    return;
+  if (add)
+  {
+    if (DisplayIsOurs(display) || gDisplayCount >= 8)
+      return;
+    gDisplays[gDisplayCount++] = display;
+    return;
+  }
+  for (int i = 0; i < gDisplayCount; ++i)
+  {
+    if (gDisplays[i] != display)
+      continue;
+    gDisplays[i] = gDisplays[gDisplayCount - 1];
+    gDisplays[--gDisplayCount] = nullptr;
+    return;
+  }
+}
+
 int OnXError(Display* display, XErrorEvent* error)
 {
+  // The handler is process-wide. Hosts such as pluginval's JUCE window also
+  // raise X errors; only failures on a display this editor opened are logged.
+  if (!DisplayIsOurs(display))
+    return gPreviousXError ? gPreviousXError(display, error) : 0;
+
   char text[256] = {};
   if (display && error)
     XGetErrorText(display, error->error_code, text, sizeof text);
@@ -51,7 +91,7 @@ void InstallXErrorHandler()
   static bool installed = false;
   if (installed)
     return;
-  XSetErrorHandler(OnXError);
+  gPreviousXError = XSetErrorHandler(OnXError);
   installed = true;
 }
 
@@ -529,6 +569,7 @@ void* IGraphicsLinux::OpenWindow(void* pParent)
   mPlatform->world = puglNewWorld(PUGL_MODULE, 0);
   if (!mPlatform->world)
     return nullptr;
+  TrackDisplay(mPlatform->GetDisplay(), true);
   puglSetWorldString(mPlatform->world, PUGL_CLASS_NAME, "VoLum");
 
   Display* display = mPlatform->GetDisplay();
@@ -610,6 +651,7 @@ void IGraphicsLinux::CloseWindow()
   }
   if (mPlatform->world)
   {
+    TrackDisplay(display, false);
     puglFreeWorld(mPlatform->world);
     mPlatform->world = nullptr;
   }
