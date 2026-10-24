@@ -143,7 +143,10 @@ BEGIN_IPLUG_NAMESPACE
     int i = (int) strlen(cStr);
     cStr[i++] = tz >= 0 ? '+' : '-';
     if (tz < 0) tz = -tz;
-    snprintf(&cStr[i], 32, "%02d%02d", tz / 60, tz % 60);
+    // The destination is the tail of cStr, not a fresh 32-byte buffer. GCC's
+    // fortify check aborts when the length argument is larger than the bytes
+    // that remain. The four timezone digits still fit.
+    snprintf(&cStr[i], sizeof(cStr) - static_cast<size_t>(i), "%02d%02d", tz / 60, tz % 60);
     
     static char sTimeStr[32];
     strcpy(sTimeStr, cStr);

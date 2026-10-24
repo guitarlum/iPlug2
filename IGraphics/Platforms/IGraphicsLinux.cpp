@@ -55,7 +55,8 @@ void IGraphicsLinux::HideMouseCursor(bool, bool) {}
 
 void IGraphicsLinux::MoveMouseCursor(float, float) {}
 
-EMsgBoxResult IGraphicsLinux::ShowMessageBox(const char*, const char*, EMsgBoxType, IMsgBoxCompletionHandlerFunc completionHandler)
+EMsgBoxResult IGraphicsLinux::ShowMessageBox(const char*, const char*, EMsgBoxType,
+                                             IMsgBoxCompletionHandlerFunc completionHandler)
 {
   if (completionHandler)
     completionHandler(kNoResult);
