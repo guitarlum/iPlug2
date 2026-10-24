@@ -95,6 +95,7 @@ private:
 
   _XDisplay* mDisplay = nullptr;
   unsigned long mPlugWnd = 0;
+  unsigned long mParentWnd = 0; // the host's embed window; 0 for a top-level window
   unsigned long mColormap = 0;
   __GLXcontextRec* mGLContext = nullptr;
 

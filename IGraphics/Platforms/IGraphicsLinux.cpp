@@ -141,6 +141,7 @@ void* IGraphicsLinux::OpenWindow(void* pParent)
     DestroyGLWindow();
     return nullptr;
   }
+  mParentWnd = pParent ? parent : 0;
 
   ActivateGLContext();
   if (!LoadGL() || !GLAD_GL_VERSION_2_0)
@@ -190,27 +191,12 @@ void IGraphicsLinux::CloseWindow()
 bool IGraphicsLinux::CreateGLWindow(unsigned long parent, int w, int h)
 {
   const int screen = DefaultScreen(mDisplay);
-  const int fbAttribs[] = {GLX_X_RENDERABLE,
-                           kTrue,
-                           GLX_DRAWABLE_TYPE,
-                           GLX_WINDOW_BIT,
-                           GLX_RENDER_TYPE,
-                           GLX_RGBA_BIT,
-                           GLX_X_VISUAL_TYPE,
-                           GLX_TRUE_COLOR,
-                           GLX_RED_SIZE,
-                           8,
-                           GLX_GREEN_SIZE,
-                           8,
-                           GLX_BLUE_SIZE,
-                           8,
-                           GLX_DEPTH_SIZE,
-                           24,
-                           GLX_STENCIL_SIZE,
-                           8,
-                           GLX_DOUBLEBUFFER,
-                           kTrue,
-                           0};
+  // clang-format off
+  const int fbAttribs[] = {
+    GLX_X_RENDERABLE, kTrue, GLX_DRAWABLE_TYPE, GLX_WINDOW_BIT, GLX_RENDER_TYPE, GLX_RGBA_BIT, GLX_X_VISUAL_TYPE, GLX_TRUE_COLOR,
+    GLX_RED_SIZE, 8, GLX_GREEN_SIZE, 8, GLX_BLUE_SIZE, 8, GLX_DEPTH_SIZE, 24, GLX_STENCIL_SIZE, 8, GLX_DOUBLEBUFFER, kTrue,
+    0};
+  // clang-format on
 
   // The window gets the visual of the FBConfig the context is created from,
   // preferring the parent's depth. The GLX 1.2 path (ticket 05 leaf) is the
@@ -292,7 +278,7 @@ void IGraphicsLinux::DestroyGLWindow()
     XDestroyWindow(mDisplay, mPlugWnd);
   if (mColormap)
     XFreeColormap(mDisplay, mColormap);
-  mPlugWnd = mColormap = 0;
+  mPlugWnd = mColormap = mParentWnd = 0;
   XSync(mDisplay, kFalse); // report errors from the teardown while our handler is still installed
   RemoveDisplay(mDisplay);
   XCloseDisplay(mDisplay);
@@ -532,10 +518,15 @@ void IGraphicsLinux::DispatchEvent(void* pEvent)
     char utf8[5] = {};
     KeysymToUTF8(keysym, utf8);
     const IKeyPress keyPress(utf8, KeysymToVK(keysym), ke.state & ShiftMask, ke.state & ControlMask, ke.state & Mod1Mask);
-    if (event.type == KeyPress)
-      OnKeyDown(ke.x / scale, ke.y / scale, keyPress);
-    else
-      OnKeyUp(ke.x / scale, ke.y / scale, keyPress);
+    const bool handled = event.type == KeyPress ? OnKeyDown(ke.x / scale, ke.y / scale, keyPress) : OnKeyUp(ke.x / scale, ke.y / scale, keyPress);
+    if (!handled && mParentWnd)
+    {
+      // Like IGraphicsWin sending unhandled keys to the root window: the host
+      // keeps its shortcuts (space for transport) while the editor has focus.
+      XEvent forward = event;
+      forward.xkey.window = mParentWnd;
+      XSendEvent(mDisplay, mParentWnd, kTrue, event.type == KeyPress ? KeyPressMask : KeyReleaseMask, &forward);
+    }
     break;
   }
   default:
