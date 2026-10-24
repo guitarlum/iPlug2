@@ -20,28 +20,19 @@ using namespace iplug;
 using namespace igraphics;
 
 IGraphicsLinux::IGraphicsLinux(IGEditorDelegate& dlg, int w, int h, int fps, float scale)
-: IGRAPHICS_DRAW_CLASS(dlg, w, h, fps, scale)
+  : IGRAPHICS_DRAW_CLASS(dlg, w, h, fps, scale)
 {
 }
 
 IGraphicsLinux::~IGraphicsLinux() = default;
 
-void* IGraphicsLinux::OpenWindow(void*)
-{
-  return nullptr;
-}
+void* IGraphicsLinux::OpenWindow(void*) { return nullptr; }
 
 void IGraphicsLinux::CloseWindow() {}
 
-bool IGraphicsLinux::WindowIsOpen()
-{
-  return false;
-}
+bool IGraphicsLinux::WindowIsOpen() { return false; }
 
-void* IGraphicsLinux::GetWindow()
-{
-  return nullptr;
-}
+void* IGraphicsLinux::GetWindow() { return nullptr; }
 
 void IGraphicsLinux::GetMouseLocation(float& x, float& y) const
 {
@@ -55,8 +46,7 @@ void IGraphicsLinux::HideMouseCursor(bool, bool) {}
 
 void IGraphicsLinux::MoveMouseCursor(float, float) {}
 
-EMsgBoxResult IGraphicsLinux::ShowMessageBox(const char*, const char*, EMsgBoxType,
-                                             IMsgBoxCompletionHandlerFunc completionHandler)
+EMsgBoxResult IGraphicsLinux::ShowMessageBox(const char*, const char*, EMsgBoxType, IMsgBoxCompletionHandlerFunc completionHandler)
 {
   if (completionHandler)
     completionHandler(kNoResult);
@@ -65,20 +55,13 @@ EMsgBoxResult IGraphicsLinux::ShowMessageBox(const char*, const char*, EMsgBoxTy
 
 void IGraphicsLinux::ForceEndUserEdit() {}
 
-const char* IGraphicsLinux::GetPlatformAPIStr()
-{
-  return "Linux";
-}
+const char* IGraphicsLinux::GetPlatformAPIStr() { return "Linux"; }
 
 void IGraphicsLinux::UpdateTooltips() {}
 
-bool IGraphicsLinux::RevealPathInExplorerOrFinder(WDL_String&, bool)
-{
-  return false;
-}
+bool IGraphicsLinux::RevealPathInExplorerOrFinder(WDL_String&, bool) { return false; }
 
-void IGraphicsLinux::PromptForFile(WDL_String& fileName, WDL_String& path, EFileAction, const char*,
-                                   IFileDialogCompletionHandlerFunc completionHandler)
+void IGraphicsLinux::PromptForFile(WDL_String& fileName, WDL_String& path, EFileAction, const char*, IFileDialogCompletionHandlerFunc completionHandler)
 {
   if (completionHandler)
     completionHandler(fileName, path);
@@ -90,25 +73,13 @@ void IGraphicsLinux::PromptForDirectory(WDL_String& dir, IFileDialogCompletionHa
     completionHandler(dir, dir);
 }
 
-bool IGraphicsLinux::PromptForColor(IColor&, const char*, IColorPickerHandlerFunc)
-{
-  return false;
-}
+bool IGraphicsLinux::PromptForColor(IColor&, const char*, IColorPickerHandlerFunc) { return false; }
 
-bool IGraphicsLinux::OpenURL(const char*, const char*, const char*, const char*)
-{
-  return false;
-}
+bool IGraphicsLinux::OpenURL(const char*, const char*, const char*, const char*) { return false; }
 
-int IGraphicsLinux::GetUserOSVersion()
-{
-  return 0;
-}
+int IGraphicsLinux::GetUserOSVersion() { return 0; }
 
-bool IGraphicsLinux::GetTextFromClipboard(WDL_String&)
-{
-  return false;
-}
+bool IGraphicsLinux::GetTextFromClipboard(WDL_String&) { return false; }
 
 IPopupMenu* IGraphicsLinux::CreatePlatformPopupMenu(IPopupMenu&, const IRECT, bool& isAsync)
 {
@@ -118,19 +89,10 @@ IPopupMenu* IGraphicsLinux::CreatePlatformPopupMenu(IPopupMenu&, const IRECT, bo
 
 void IGraphicsLinux::CreatePlatformTextEntry(int, const IText&, const IRECT&, int, const char*) {}
 
-PlatformFontPtr IGraphicsLinux::LoadPlatformFont(const char*, const char* fileNameOrResID)
-{
-  return LoadPlatformFontFromFile(fileNameOrResID);
-}
+PlatformFontPtr IGraphicsLinux::LoadPlatformFont(const char*, const char* fileNameOrResID) { return LoadPlatformFontFromFile(fileNameOrResID); }
 
-PlatformFontPtr IGraphicsLinux::LoadPlatformFont(const char*, void* pData, int dataSize)
-{
-  return LoadPlatformFontFromMemory(pData, dataSize);
-}
+PlatformFontPtr IGraphicsLinux::LoadPlatformFont(const char*, void* pData, int dataSize) { return LoadPlatformFontFromMemory(pData, dataSize); }
 
-PlatformFontPtr IGraphicsLinux::LoadPlatformFont(const char*, const char* fontName, ETextStyle style)
-{
-  return LoadPlatformFontFromName(fontName, style);
-}
+PlatformFontPtr IGraphicsLinux::LoadPlatformFont(const char*, const char* fontName, ETextStyle style) { return LoadPlatformFontFromName(fontName, style); }
 
 void IGraphicsLinux::CachePlatformFont(const char*, const PlatformFontPtr&) {}
