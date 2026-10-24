@@ -15,6 +15,10 @@
 
 #include "IPlugStructs.h"
 
+#ifdef OS_LINUX
+#include "IPlugVST3_LinuxRunLoop.h"
+#endif
+
 /** IPlug VST3 View  */
 template <class T>
 class IPlugVST3View : public Steinberg::CPluginView
@@ -29,6 +33,13 @@ public:
   
   ~IPlugVST3View()
   {
+#ifdef OS_LINUX
+    if (mFrameRunLoop)
+    {
+      mOwner.CloseWindow();
+      DetachFrameRunLoop();
+    }
+#endif
     mOwner.release();
   }
   
@@ -47,14 +58,8 @@ public:
       if (strcmp (type, Steinberg::kPlatformTypeNSView) == 0)
         return Steinberg::kResultTrue;
 #elif defined OS_LINUX
-#if defined(IPLUG_LINUX_EDITOR_STUB)
-      // No X11 window while IGraphicsLinux is the link stub. Ticket 07 deletes the macro.
-      (void)type;
-      return Steinberg::kResultFalse;
-#else
       if (strcmp(type, Steinberg::kPlatformTypeX11EmbedWindowID) == 0)
         return Steinberg::kResultTrue;
-#endif
 #endif
     }
     
@@ -128,17 +133,24 @@ public:
       else // Carbon
         return Steinberg::kResultFalse;
 #elif defined OS_LINUX
-#if defined(IPLUG_LINUX_EDITOR_STUB)
-      (void)pParent;
-      (void)type;
-      (void)pView;
-      return Steinberg::kNotImplemented;
-#else
-      if (strcmp(type, Steinberg::kPlatformTypeX11EmbedWindowID) == 0)
-        pView = mOwner.OpenWindow(pParent);
-      if (!pView)
+      // The X fd and the draw timer bind to the top run loop, so the frame's
+      // IRunLoop goes on top before the window opens. A host without one
+      // gives the editor no UI-thread callbacks, so it is refused.
+      if (strcmp(type, Steinberg::kPlatformTypeX11EmbedWindowID) != 0 || mFrameRunLoop)
         return Steinberg::kResultFalse;
-#endif
+      mFrameRunLoop = iplug::IPlugVST3RunLoop::Query(plugFrame);
+      if (!mFrameRunLoop)
+        return Steinberg::kResultFalse;
+      iplug::IPlugLinuxAddRunLoop(mFrameRunLoop.get());
+      pView = mOwner.OpenWindow(pParent);
+      if (!pView)
+      {
+        mOwner.CloseWindow();
+        DetachFrameRunLoop();
+        return Steinberg::kResultFalse;
+      }
+      if (mHostScale > 0.f)
+        mOwner.SetScreenScale(mHostScale);
 #endif
       return Steinberg::kResultTrue;
     }
@@ -150,12 +162,18 @@ public:
   {
     if (mOwner.HasUI())
       mOwner.CloseWindow();
+#ifdef OS_LINUX
+    DetachFrameRunLoop();
+#endif
     
     return CPluginView::removed();
   }
 
   Steinberg::tresult PLUGIN_API setContentScaleFactor(ScaleFactor factor) override
   {
+#ifdef OS_LINUX
+    mHostScale = factor;
+#endif
     mOwner.SetScreenScale(factor);
 
     return Steinberg::kResultOk;
@@ -318,4 +336,18 @@ public:
   }
 
   T& mOwner;
+
+#ifdef OS_LINUX
+private:
+  void DetachFrameRunLoop()
+  {
+    if (!mFrameRunLoop)
+      return;
+    iplug::IPlugLinuxRemoveRunLoop(mFrameRunLoop.get());
+    mFrameRunLoop.reset();
+  }
+
+  std::unique_ptr<iplug::IPlugVST3RunLoop> mFrameRunLoop;
+  float mHostScale = 0.f;
+#endif
 };

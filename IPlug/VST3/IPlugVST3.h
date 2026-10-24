@@ -173,6 +173,10 @@ public:
 
 private:
   ViewType* mView;
+#ifdef OS_LINUX
+  void DetachHostRunLoop();
+  std::unique_ptr<IPlugLinuxRunLoop> mHostRunLoop;
+#endif
 };
 
 IPlugVST3* MakePlug(const InstanceInfo& info);

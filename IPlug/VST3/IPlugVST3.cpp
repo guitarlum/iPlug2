@@ -35,7 +35,12 @@ IPlugVST3::IPlugVST3(const InstanceInfo& info, const Config& config)
   CreateTimer();
 }
 
-IPlugVST3::~IPlugVST3() {}
+IPlugVST3::~IPlugVST3()
+{
+#ifdef OS_LINUX
+  DetachHostRunLoop();
+#endif
+}
 
 #pragma mark AudioEffect overrides
 
@@ -51,6 +56,18 @@ tresult PLUGIN_API IPlugVST3::initialize(FUnknown* context)
     IPlugVST3GetHost(this, context);
     OnHostIdentified();
     OnParamReset(kReset);
+
+#ifdef OS_LINUX
+    // Editor-closed timers: the component context's IRunLoop, else the one the
+    // host passed to IPluginFactory3::setHostContext (via Steinberg::Timer).
+    if (!mHostRunLoop)
+    {
+      mHostRunLoop = IPlugVST3RunLoop::Query(context);
+      if (!mHostRunLoop)
+        mHostRunLoop = IPlugVST3FactoryTimers::Create();
+      IPlugLinuxAddRunLoop(mHostRunLoop.get());
+    }
+#endif
     
     return kResultOk;
   }
@@ -62,8 +79,22 @@ tresult PLUGIN_API IPlugVST3::terminate()
 {
   TRACE
 
+#ifdef OS_LINUX
+  DetachHostRunLoop();
+#endif
+
   return SingleComponentEffect::terminate();
 }
+
+#ifdef OS_LINUX
+void IPlugVST3::DetachHostRunLoop()
+{
+  if (!mHostRunLoop)
+    return;
+  IPlugLinuxRemoveRunLoop(mHostRunLoop.get());
+  mHostRunLoop.reset();
+}
+#endif
 
 tresult PLUGIN_API IPlugVST3::setBusArrangements(SpeakerArrangement* pInputBusArrangements, int32 numInBuses, SpeakerArrangement* pOutputBusArrangements, int32 numOutBuses)
 {
@@ -138,19 +169,13 @@ tresult PLUGIN_API IPlugVST3::setParamNormalized(ParamID tag, ParamValue value)
 
 IPlugView* PLUGIN_API IPlugVST3::createView(const char* name)
 {
-#if defined(OS_LINUX) && defined(IPLUG_LINUX_EDITOR_STUB)
-  // IGraphicsLinux reports no window. Ticket 07 deletes IPLUG_LINUX_EDITOR_STUB.
-  (void)name;
-  return nullptr;
-#else
   if (HasUI() && name && strcmp(name, "editor") == 0)
   {
     mView = new ViewType(*this);
     return mView;
   }
-
+  
   return nullptr;
-#endif
 }
 
 tresult PLUGIN_API IPlugVST3::setEditorState(IBStream* pState)
