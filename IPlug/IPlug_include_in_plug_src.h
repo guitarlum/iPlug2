@@ -39,7 +39,7 @@
 
   float GetScaleForHWND(HWND hWnd)
   {
-    // Capture hook. Unset, the DPI path below is unchanged.
+    // Inert unless VOLUM_SCREEN_SCALE is set.
     if (const char* forced = getenv("VOLUM_SCREEN_SCALE"))
     {
       const float scale = static_cast<float>(atof(forced));
