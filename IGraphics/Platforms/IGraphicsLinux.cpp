@@ -544,7 +544,7 @@ void IGraphicsLinux::DispatchEvent(void* pEvent)
       // so a KeyPressMask send is delivered to nobody.
       XEvent forward = event;
       forward.xkey.window = mParentWnd;
-      XSendEvent(mDisplay, mParentWnd, False, NoEventMask, &forward);
+      XSendEvent(mDisplay, mParentWnd, kFalse, 0, &forward);
       if (const char* logPath = std::getenv("VOLUM_FORWARD_KEY_LOG"))
       {
         if (FILE* f = std::fopen(logPath, "a"))
