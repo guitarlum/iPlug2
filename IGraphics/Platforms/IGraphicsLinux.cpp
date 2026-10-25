@@ -520,6 +520,15 @@ void IGraphicsLinux::DispatchEvent(void* pEvent)
   case KeyPress:
   case KeyRelease: {
     XKeyEvent& ke = event.xkey;
+    if (const char* pLog = std::getenv("VOLUM_KEY_LOG"))
+    {
+      if (FILE* f = std::fopen(pLog, "a"))
+      {
+        std::fprintf(f, "recv %s window 0x%lx\n", event.type == KeyPress ? "down" : "up",
+                     static_cast<unsigned long>(event.xany.window));
+        std::fclose(f);
+      }
+    }
     // Auto-repeat arrives as release+press with one timestamp. Windows sends
     // only repeated key downs, so the release is dropped.
     if (event.type == KeyRelease && XEventsQueued(mDisplay, QueuedAfterReading) > 0)
