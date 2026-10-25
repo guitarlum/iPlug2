@@ -543,6 +543,14 @@ void IGraphicsLinux::DispatchEvent(void* pEvent)
       XEvent forward = event;
       forward.xkey.window = mParentWnd;
       XSendEvent(mDisplay, mParentWnd, kTrue, event.type == KeyPress ? KeyPressMask : KeyReleaseMask, &forward);
+      if (const char* logPath = std::getenv("VOLUM_FORWARD_KEY_LOG"))
+      {
+        if (FILE* f = std::fopen(logPath, "a"))
+        {
+          std::fprintf(f, "forward %s %lu\n", event.type == KeyPress ? "down" : "up", static_cast<unsigned long>(keysym));
+          std::fclose(f);
+        }
+      }
     }
     break;
   }

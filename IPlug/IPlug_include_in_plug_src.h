@@ -39,6 +39,14 @@
 
   float GetScaleForHWND(HWND hWnd)
   {
+    // Capture hook. Unset, the DPI path below is unchanged.
+    if (const char* forced = getenv("VOLUM_SCREEN_SCALE"))
+    {
+      const float scale = static_cast<float>(atof(forced));
+      if (scale >= 1.f && scale <= 4.f)
+        return scale;
+    }
+
     if (!__GetDpiForWindow)
     {
       HINSTANCE h = LoadLibraryA("user32.dll");
