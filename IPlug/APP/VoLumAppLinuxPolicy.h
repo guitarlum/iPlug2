@@ -6,6 +6,7 @@
 // IPlugAPP_dialog.cpp call them inside OS_LINUX.
 
 #include <cstdint>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -92,6 +93,51 @@ inline VoLumLinuxQuitStep VoLumLinuxQuitStepFor(int signalsReceived, bool modalO
   if (signalsReceived >= 2)
     return VoLumLinuxQuitStep::ExitNow;
   return modalOpen ? VoLumLinuxQuitStep::CancelModal : VoLumLinuxQuitStep::CloseMainWindow;
+}
+
+/** What VOLUM_LINUX_GATE_TONE asks the standalone to play instead of the amp.
+ * Read once on the main thread before the audio stream exists. */
+enum class VoLumLinuxGateToneMode : uint8_t
+{
+  Off,
+  Sine,
+  Mute,
+  Drop
+};
+
+struct VoLumLinuxGateTonePlan
+{
+  VoLumLinuxGateToneMode mode = VoLumLinuxGateToneMode::Off;
+  /** Callback index of the one zeroed buffer when mode is Drop. */
+  unsigned dropAt = 400;
+};
+
+/** tone is VOLUM_LINUX_GATE_TONE, dropAt is VOLUM_LINUX_GATE_DROP_AT. Empty or
+ * missing tone is off. Anything other than mute or drop is the sine. A drop
+ * index that is not a positive integer keeps 400. */
+inline VoLumLinuxGateTonePlan VoLumLinuxReadGateTone(const char* tone, const char* dropAt)
+{
+  VoLumLinuxGateTonePlan plan;
+  if (!tone || !tone[0])
+    return plan;
+  if (std::strcmp(tone, "mute") == 0)
+    plan.mode = VoLumLinuxGateToneMode::Mute;
+  else if (std::strcmp(tone, "drop") == 0)
+    plan.mode = VoLumLinuxGateToneMode::Drop;
+  else
+    plan.mode = VoLumLinuxGateToneMode::Sine;
+  if (!dropAt || !dropAt[0])
+    return plan;
+  unsigned n = 0;
+  for (const char* p = dropAt; *p; ++p)
+  {
+    if (*p < '0' || *p > '9')
+      return plan;
+    n = n * 10u + static_cast<unsigned>(*p - '0');
+  }
+  if (n > 0)
+    plan.dropAt = n;
+  return plan;
 }
 
 } // namespace iplug

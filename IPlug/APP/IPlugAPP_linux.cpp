@@ -16,8 +16,6 @@
 #include <unistd.h>
 
 #include <cmath>
-#include <cstdlib>
-#include <cstring>
 #include <string>
 
 #include "IPlugAPP_host.h"
@@ -168,38 +166,10 @@ void IPlugAPPLinuxPrintDevices(FILE* out)
 }
 
 bool IPlugAPPLinuxGateTone(double* output, int channels, uint32_t frames, double sampleRate, unsigned int status,
-                           double streamTime)
+                           double streamTime, const VoLumLinuxGateTonePlan& plan, double& phase, double& lastMono,
+                           unsigned& seen)
 {
-  // Decided once. A normal launch pays one getenv, then this returns false
-  // without touching the buffer.
-  static int decided = 0;
-  static int enabled = 0;
-  static int mute = 0;
-  static int drop = 0;
-  static unsigned dropAt = 400;
-  static unsigned seen = 0;
-  static double phase = 0.0;
-  static double lastMono = -1.0;
-  if (!decided)
-  {
-    decided = 1;
-    const char* env = std::getenv("VOLUM_LINUX_GATE_TONE");
-    enabled = env && env[0] ? 1 : 0;
-    if (enabled)
-    {
-      mute = std::strcmp(env, "mute") == 0;
-      drop = std::strcmp(env, "drop") == 0;
-      if (const char* at = std::getenv("VOLUM_LINUX_GATE_DROP_AT"))
-      {
-        const int n = std::atoi(at);
-        if (n > 0)
-          dropAt = static_cast<unsigned>(n);
-      }
-      std::fprintf(stderr, "gate-tone mode=%s amp_dbfs=-24\n", mute ? "mute" : (drop ? "drop" : "sine"));
-      std::fflush(stderr);
-    }
-  }
-  if (!enabled)
+  if (plan.mode == VoLumLinuxGateToneMode::Off)
     return false;
   if (!output || channels <= 0 || frames == 0)
     return true;
@@ -224,7 +194,7 @@ bool IPlugAPPLinuxGateTone(double* output, int channels, uint32_t frames, double
     std::fflush(stderr);
   }
 
-  const bool hole = drop && seen == dropAt;
+  const bool hole = plan.mode == VoLumLinuxGateToneMode::Drop && seen == plan.dropAt;
   if (hole)
   {
     std::fprintf(stderr, "gate-drop callback=%u\n", seen);
@@ -233,9 +203,10 @@ bool IPlugAPPLinuxGateTone(double* output, int channels, uint32_t frames, double
   constexpr double kAmp = 0.063095734448; // -24 dBFS
   constexpr double kTwoPi = 6.28318530717958647692;
   const double step = kTwoPi * 440.0 / rate;
+  const bool silent = plan.mode == VoLumLinuxGateToneMode::Mute || hole;
   for (uint32_t i = 0; i < frames; ++i)
   {
-    const double s = (mute || hole) ? 0.0 : kAmp * std::sin(phase);
+    const double s = silent ? 0.0 : kAmp * std::sin(phase);
     phase += step;
     if (phase > kTwoPi)
       phase -= kTwoPi;

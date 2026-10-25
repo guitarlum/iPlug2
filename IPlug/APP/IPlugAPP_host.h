@@ -38,6 +38,10 @@
 #include "wdltypes.h"
 #include "wdlstring.h"
 
+#if defined OS_LINUX
+#include "VoLumAppLinuxPolicy.h"
+#endif
+
 #include "IPlugPlatform.h"
 #include "IPlugConstants.h"
 
@@ -363,6 +367,16 @@ private:
   
   WDL_PtrList<double> mInputBufPtrs;
   WDL_PtrList<double> mOutputBufPtrs;
+
+#if defined OS_LINUX
+  // Real-device gate. The plan is written in Init, before the audio thread
+  // exists, and never again. The three cursors are written only by the audio
+  // callback.
+  VoLumLinuxGateTonePlan mLinuxGateTone{};
+  double mLinuxGatePhase = 0.0;
+  double mLinuxGateLastMono = -1.0;
+  unsigned mLinuxGateSeen = 0;
+#endif
 
   friend class IPlugAPP;
 };

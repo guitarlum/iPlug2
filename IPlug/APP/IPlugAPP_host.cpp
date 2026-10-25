@@ -14,6 +14,8 @@
 #include <sys/stat.h>
 #endif
 #if defined OS_LINUX
+#include <cstdio>
+#include <cstdlib>
 #include <unistd.h>
 #include "IPlugAPP_linux.h"
 #endif
@@ -112,6 +114,18 @@ bool IPlugAPPHost::Init()
     return false;
 
 #if defined OS_LINUX
+  mLinuxGateTone =
+    VoLumLinuxReadGateTone(std::getenv("VOLUM_LINUX_GATE_TONE"), std::getenv("VOLUM_LINUX_GATE_DROP_AT"));
+  if (mLinuxGateTone.mode != VoLumLinuxGateToneMode::Off)
+  {
+    const char* name = "sine";
+    if (mLinuxGateTone.mode == VoLumLinuxGateToneMode::Mute)
+      name = "mute";
+    else if (mLinuxGateTone.mode == VoLumLinuxGateToneMode::Drop)
+      name = "drop";
+    std::fprintf(stderr, "gate-tone mode=%s amp_dbfs=-24\n", name);
+    std::fflush(stderr);
+  }
   {
     std::string apis;
     for (const auto& choice : IPlugAPPLinuxDriverChoices())
@@ -1451,7 +1465,9 @@ int IPlugAPPHost::AudioCallback(void* pOutputBuffer, void* pInputBuffer, uint32_
 #if defined OS_LINUX
   // Gate tone replaces the plug-in output. Skipping the plug-in is what keeps a
   // hardware loopback of this output from feeding the amp.
-  if (IPlugAPPLinuxGateTone(pOutputBufferD, devOuts, nFrames, _this->mSampleRate, status, streamTime))
+  if (IPlugAPPLinuxGateTone(pOutputBufferD, devOuts, nFrames, _this->mSampleRate, status, streamTime,
+                            _this->mLinuxGateTone, _this->mLinuxGatePhase, _this->mLinuxGateLastMono,
+                            _this->mLinuxGateSeen))
     return 0;
 #endif
 
