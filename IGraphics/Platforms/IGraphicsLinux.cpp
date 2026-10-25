@@ -28,11 +28,15 @@
 #include <cstdio>
 #include <vector>
 
+#include "IGraphicsLinuxClipboard.h"
+#include "IGraphicsLinuxDialogs.h"
 #include "IGraphicsLinuxFont.h"
 #include "IGraphicsLinuxKeys.h"
 #include "IPopupMenuControl.h"
 #include "ITextEntryControl.h"
 #include "Linux/IPlugLinuxRunLoop.h"
+
+#include <sys/stat.h>
 
 using namespace iplug;
 using namespace igraphics;
@@ -113,7 +117,11 @@ IGraphicsLinux::IGraphicsLinux(IGEditorDelegate& dlg, int w, int h, int fps, flo
 {
 }
 
-IGraphicsLinux::~IGraphicsLinux() { CloseWindow(); }
+IGraphicsLinux::~IGraphicsLinux()
+{
+  linux_dialogs::CancelOwner(this);
+  CloseWindow();
+}
 
 int IGraphicsLinux::XErrorCount() { return sXErrorCount; }
 
@@ -187,6 +195,7 @@ void IGraphicsLinux::CloseWindow()
   }
   if (Tracing())
     Log("editor 0x%lx closed", mPlugWnd);
+  linux_clipboard::ForgetWindow(mPlugWnd);
   DestroyGLWindow();
 }
 
@@ -412,6 +421,8 @@ void IGraphicsLinux::OnDisplayTimer()
 void IGraphicsLinux::DispatchEvent(void* pEvent)
 {
   XEvent& event = *static_cast<XEvent*>(pEvent);
+  if (linux_clipboard::HandleEvent(reinterpret_cast<_XDisplay*>(mDisplay), mPlugWnd, &event))
+    return;
   if (event.xany.window != mPlugWnd)
     return;
 
@@ -509,6 +520,15 @@ void IGraphicsLinux::DispatchEvent(void* pEvent)
   case KeyPress:
   case KeyRelease: {
     XKeyEvent& ke = event.xkey;
+    if (const char* pLog = std::getenv("VOLUM_KEY_LOG"))
+    {
+      if (FILE* f = std::fopen(pLog, "a"))
+      {
+        std::fprintf(f, "recv %s window 0x%lx\n", event.type == KeyPress ? "down" : "up",
+                     static_cast<unsigned long>(event.xany.window));
+        std::fclose(f);
+      }
+    }
     // Auto-repeat arrives as release+press with one timestamp. Windows sends
     // only repeated key downs, so the release is dropped.
     if (event.type == KeyRelease && XEventsQueued(mDisplay, QueuedAfterReading) > 0)
@@ -527,11 +547,21 @@ void IGraphicsLinux::DispatchEvent(void* pEvent)
     const bool handled = event.type == KeyPress ? OnKeyDown(ke.x / scale, ke.y / scale, keyPress) : OnKeyUp(ke.x / scale, ke.y / scale, keyPress);
     if (!handled && mParentWnd)
     {
-      // Like IGraphicsWin sending unhandled keys to the root window: the host
-      // keeps its shortcuts (space for transport) while the editor has focus.
+      // Like IGraphicsWin sending unhandled keys to the parent: the host keeps
+      // its shortcuts while the editor has focus. Mask 0 reaches the client
+      // that created the parent. GDK listens with XInput2, not core KeyPress,
+      // so a KeyPressMask send is delivered to nobody.
       XEvent forward = event;
       forward.xkey.window = mParentWnd;
-      XSendEvent(mDisplay, mParentWnd, kTrue, event.type == KeyPress ? KeyPressMask : KeyReleaseMask, &forward);
+      XSendEvent(mDisplay, mParentWnd, kFalse, 0, &forward);
+      if (const char* logPath = std::getenv("VOLUM_FORWARD_KEY_LOG"))
+      {
+        if (FILE* f = std::fopen(logPath, "a"))
+        {
+          std::fprintf(f, "forward %s %lu\n", event.type == KeyPress ? "down" : "up", static_cast<unsigned long>(keysym));
+          std::fclose(f);
+        }
+      }
     }
     break;
   }
@@ -654,59 +684,192 @@ void IGraphicsLinux::ForceEndUserEdit()
 
 #pragma mark - Dialogs, clipboard and URLs (ticket 09)
 
+namespace
+{
+void SplitParent(const std::string& full, WDL_String& fileName, WDL_String& path)
+{
+  fileName.Set(full.c_str());
+  const std::size_t slash = full.find_last_of('/');
+  if (slash == std::string::npos)
+    return;
+  path.Set(full.substr(0, slash + 1).c_str());
+}
+
+linux_dialogs::Request FileRequest(linux_dialogs::Kind kind, const WDL_String& fileName, const WDL_String& path, const char* ext)
+{
+  linux_dialogs::Request request;
+  request.kind = kind;
+  request.fileName = fileName.Get();
+  request.path = path.Get();
+  request.extensions = ext ? ext : "";
+  return request;
+}
+} // namespace
+
 EMsgBoxResult IGraphicsLinux::ShowMessageBox(const char* str, const char* caption, EMsgBoxType type, IMsgBoxCompletionHandlerFunc completionHandler)
 {
-  Log("message box not implemented: %s", str ? str : "");
-  if (completionHandler)
-    completionHandler(kNoResult);
+  // kNoResult now: the box is a child process, and waiting for it on the host
+  // UI thread can deadlock a host. The button arrives through completionHandler.
+  linux_dialogs::Request request;
+  request.kind = linux_dialogs::Kind::MessageBox;
+  request.message = str ? str : "";
+  request.title = caption ? caption : "";
+  request.messageType = static_cast<int>(type);
+  linux_dialogs::Start(
+    request,
+    [completionHandler](const linux_dialogs::Result& result) {
+      if (completionHandler)
+        completionHandler(static_cast<EMsgBoxResult>(result.messageResult));
+    },
+    this);
   return kNoResult;
 }
 
 bool IGraphicsLinux::RevealPathInExplorerOrFinder(WDL_String& path, bool select)
 {
-  Log("reveal path not implemented: %s", path.Get());
-  return false;
+  std::string target = path.Get();
+  if (target.empty())
+    return false;
+  if (select)
+  {
+    struct stat st;
+    if (::stat(target.c_str(), &st) == 0 && !S_ISDIR(st.st_mode))
+    {
+      const std::size_t slash = target.find_last_of('/');
+      if (slash == std::string::npos)
+        target = ".";
+      else if (slash == 0)
+        target = "/";
+      else
+        target.resize(slash);
+    }
+  }
+  return linux_dialogs::Launch(target);
 }
 
 void IGraphicsLinux::PromptForFile(WDL_String& fileName, WDL_String& path, EFileAction action, const char* ext, IFileDialogCompletionHandlerFunc completionHandler)
 {
-  Log("file dialog not implemented (%s)", ext ? ext : "");
+  const linux_dialogs::Kind kind = action == EFileAction::Save ? linux_dialogs::Kind::SaveFile : linux_dialogs::Kind::OpenFile;
+  const linux_dialogs::Request request = FileRequest(kind, fileName, path, ext);
   fileName.Set("");
   path.Set("");
-  if (completionHandler)
-    completionHandler(fileName, path);
+  linux_dialogs::Start(
+    request,
+    [completionHandler](const linux_dialogs::Result& result) {
+      WDL_String chosen;
+      WDL_String dir;
+      if (result.accepted && !result.paths.empty())
+        SplitParent(result.paths[0], chosen, dir);
+      if (completionHandler)
+        completionHandler(chosen, dir);
+    },
+    this);
+}
+
+void IGraphicsLinux::PromptForFiles(WDL_String&, std::vector<WDL_String>& fileNames, const char*)
+{
+  // PromptForFile returns before the dialog finishes, so the base implementation
+  // would open a dialog and then report a cancel. Multi-select uses PromptForOpenFiles.
+  fileNames.clear();
+}
+
+void IGraphicsLinux::PromptForOpenFiles(const char* ext, std::function<void(const std::vector<std::string>& paths)> completion)
+{
+  linux_dialogs::Request request;
+  request.kind = linux_dialogs::Kind::OpenFiles;
+  request.extensions = ext ? ext : "";
+  linux_dialogs::Start(
+    request,
+    [completion](const linux_dialogs::Result& result) {
+      if (completion)
+        completion(result.accepted ? result.paths : std::vector<std::string>());
+    },
+    this);
 }
 
 void IGraphicsLinux::PromptForDirectory(WDL_String& dir, IFileDialogCompletionHandlerFunc completionHandler)
 {
-  Log("directory dialog not implemented");
+  WDL_String empty;
+  const std::string initial = dir.Get();
   dir.Set("");
-  if (completionHandler)
-    completionHandler(dir, dir);
+  linux_dialogs::Request request = FileRequest(linux_dialogs::Kind::Directory, empty, dir, "");
+  request.path = initial;
+  linux_dialogs::Start(
+    request,
+    [completionHandler](const linux_dialogs::Result& result) {
+      WDL_String chosen;
+      WDL_String path;
+      if (result.accepted && !result.paths.empty())
+        path.Set(result.paths[0].c_str());
+      if (completionHandler)
+        completionHandler(chosen, path);
+    },
+    this);
 }
 
-bool IGraphicsLinux::PromptForColor(IColor& color, const char* str, IColorPickerHandlerFunc func)
-{
-  Log("color picker not implemented");
-  return false;
-}
+bool IGraphicsLinux::PromptForColor(IColor&, const char*, IColorPickerHandlerFunc) { return false; }
 
 bool IGraphicsLinux::OpenURL(const char* url, const char* msgWindowTitle, const char* confirmMsg, const char* errMsgOnFailure)
 {
-  Log("open URL not implemented: %s", url ? url : "");
+  if (!url || !*url)
+    return false;
+  const std::string target = url;
+  const std::string title = msgWindowTitle ? msgWindowTitle : "";
+  const std::string failure = errMsgOnFailure ? errMsgOnFailure : "";
+  if (confirmMsg && *confirmMsg)
+  {
+    linux_dialogs::Request request;
+    request.kind = linux_dialogs::Kind::MessageBox;
+    request.messageType = static_cast<int>(kMB_YESNO);
+    request.title = title;
+    request.message = confirmMsg;
+    linux_dialogs::Start(
+      request,
+      [target, title, failure](const linux_dialogs::Result& result) {
+        if (result.messageResult != static_cast<int>(kYES))
+          return;
+        if (!linux_dialogs::Launch(target) && !failure.empty())
+        {
+          linux_dialogs::Request box;
+          box.kind = linux_dialogs::Kind::MessageBox;
+          box.title = title;
+          box.message = failure;
+          linux_dialogs::Start(box, linux_dialogs::Completion(), nullptr);
+        }
+      },
+      this);
+    return true;
+  }
+  if (linux_dialogs::Launch(target))
+    return true;
+  if (!failure.empty())
+  {
+    linux_dialogs::Request box;
+    box.kind = linux_dialogs::Kind::MessageBox;
+    box.title = title;
+    box.message = failure;
+    linux_dialogs::Start(box, linux_dialogs::Completion(), this);
+  }
   return false;
 }
 
 bool IGraphicsLinux::GetTextFromClipboard(WDL_String& str)
 {
-  Log("clipboard not implemented");
-  return false;
+  str.Set("");
+  if (!IPlugLinuxIsUIThread() || !mDisplay || !mPlugWnd)
+    return false;
+  std::string text;
+  if (!linux_clipboard::GetText(reinterpret_cast<_XDisplay*>(mDisplay), mPlugWnd, text))
+    return false;
+  str.Set(text.c_str());
+  return true;
 }
 
 bool IGraphicsLinux::SetTextInClipboard(const char* str)
 {
-  Log("clipboard not implemented");
-  return false;
+  if (!IPlugLinuxIsUIThread() || !mDisplay || !mPlugWnd)
+    return false;
+  return linux_clipboard::SetText(reinterpret_cast<_XDisplay*>(mDisplay), mPlugWnd, str ? str : "");
 }
 
 #pragma mark - Fonts

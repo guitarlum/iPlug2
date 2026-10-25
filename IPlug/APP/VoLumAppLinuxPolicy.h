@@ -55,10 +55,12 @@ inline uint32_t VoLumLinuxStartupDriver(uint32_t storedDriverType, bool jackLoad
   return VoLumLinuxDriverComboIndex(choices, storedDriverType) >= 0 ? storedDriverType : kVoLumLinuxDriverAlsa;
 }
 
-/** settings.ini's folder, the same one VoLumPaths.h LinuxVoLumDataDir uses for
- * the library: $XDG_DATA_HOME/<bundle>/ when XDG_DATA_HOME is absolute (the XDG
- * spec says a relative value is invalid and is ignored), else
- * $HOME/.local/share/<bundle>/. Empty when neither is usable. */
+/** The one XDG data directory. VoLumPaths.h LinuxVoLumDataDir calls this, and
+ * the standalone writes settings.ini here, so the app and the library cannot
+ * drift. $XDG_DATA_HOME/<bundle>/ when XDG_DATA_HOME is absolute (the XDG spec
+ * says a relative value is invalid and is ignored), else
+ * $HOME/.local/share/<bundle>/. Empty when neither is usable. The string ends
+ * with a slash. */
 inline std::string VoLumLinuxAppDataDir(const char* xdgDataHome, const char* home, const char* bundleName)
 {
   if (xdgDataHome && xdgDataHome[0] == '/')

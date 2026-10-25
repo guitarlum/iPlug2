@@ -23,6 +23,7 @@
 #if defined OS_LINUX
 #include "IPlugAPP_linux.h"
 #include "VoLumDiagLog.h"
+#include <cstdio>
 #endif
 
 using namespace iplug;
@@ -760,6 +761,20 @@ WDL_DLGRET IPlugAPPHost::MainDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPA
       SetTimer(hwndDlg, kAudioStatusTimerID, 500, NULL);
       return 1;
     }
+#ifdef OS_LINUX
+    case WM_KEYDOWN:
+    case WM_KEYUP:
+      // Proof that a key the editor forwarded arrived at this window. Unset, nothing is written.
+      if (const char* logPath = std::getenv("VOLUM_HOST_KEY_LOG"))
+      {
+        if (FILE* f = std::fopen(logPath, "a"))
+        {
+          std::fprintf(f, "%s %u\n", uMsg == WM_KEYDOWN ? "down" : "up", static_cast<unsigned>(wParam));
+          std::fclose(f);
+        }
+      }
+      return 0;
+#endif
     case WM_TIMER:
       // pAppHost is null once WM_DESTROY has released the instance, and a timer
       // message posted before KillTimer can still be waiting in the queue.
