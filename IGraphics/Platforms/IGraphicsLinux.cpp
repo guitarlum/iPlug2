@@ -538,11 +538,13 @@ void IGraphicsLinux::DispatchEvent(void* pEvent)
     const bool handled = event.type == KeyPress ? OnKeyDown(ke.x / scale, ke.y / scale, keyPress) : OnKeyUp(ke.x / scale, ke.y / scale, keyPress);
     if (!handled && mParentWnd)
     {
-      // Like IGraphicsWin sending unhandled keys to the root window: the host
-      // keeps its shortcuts (space for transport) while the editor has focus.
+      // Like IGraphicsWin sending unhandled keys to the parent: the host keeps
+      // its shortcuts while the editor has focus. Mask 0 reaches the client
+      // that created the parent. GDK listens with XInput2, not core KeyPress,
+      // so a KeyPressMask send is delivered to nobody.
       XEvent forward = event;
       forward.xkey.window = mParentWnd;
-      XSendEvent(mDisplay, mParentWnd, kTrue, event.type == KeyPress ? KeyPressMask : KeyReleaseMask, &forward);
+      XSendEvent(mDisplay, mParentWnd, False, NoEventMask, &forward);
       if (const char* logPath = std::getenv("VOLUM_FORWARD_KEY_LOG"))
       {
         if (FILE* f = std::fopen(logPath, "a"))
