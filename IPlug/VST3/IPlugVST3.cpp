@@ -159,7 +159,7 @@ IPlugView* PLUGIN_API IPlugVST3::createView(const char* name)
     mView = new ViewType(*this);
     return mView;
   }
-  
+
   return nullptr;
 }
 

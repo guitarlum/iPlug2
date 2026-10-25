@@ -12,6 +12,10 @@
 
 #include "IPlugPlatform.h"
 
+#include <functional>
+#include <string>
+#include <vector>
+
 #include "IGraphicsLinuxGLNesting.h"
 #include "IGraphics_select.h"
 
@@ -58,6 +62,9 @@ public:
 
   bool RevealPathInExplorerOrFinder(WDL_String& path, bool select) override;
   void PromptForFile(WDL_String& fileName, WDL_String& path, EFileAction action, const char* ext, IFileDialogCompletionHandlerFunc completionHandler) override;
+  void PromptForFiles(WDL_String& path, std::vector<WDL_String>& fileNames, const char* ext) override;
+  /** Async multi-select. completion runs on the UI thread with full paths, or an empty list if the user cancels. */
+  void PromptForOpenFiles(const char* ext, std::function<void(const std::vector<std::string>& paths)> completion);
   void PromptForDirectory(WDL_String& dir, IFileDialogCompletionHandlerFunc completionHandler) override;
   bool PromptForColor(IColor& color, const char* str, IColorPickerHandlerFunc func) override;
 
