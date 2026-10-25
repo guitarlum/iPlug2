@@ -38,10 +38,6 @@
 #include "wdltypes.h"
 #include "wdlstring.h"
 
-#if defined OS_LINUX
-#include "VoLumAppLinuxPolicy.h"
-#endif
-
 #include "IPlugPlatform.h"
 #include "IPlugConstants.h"
 
@@ -50,6 +46,10 @@
 #include "VoLumIPlugAPPVectorAccumulator.h"
 
 #include "config.h"
+
+#if defined OS_LINUX
+#include "VoLumAppLinuxPolicy.h"
+#endif
 
 #ifdef OS_WIN
   #include <WindowsX.h>
