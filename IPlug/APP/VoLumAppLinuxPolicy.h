@@ -142,10 +142,7 @@ inline VoLumLinuxGateTonePlan VoLumLinuxReadGateTone(const char* tone, const cha
 
 /** VOLUM_CALLBACK_TIMING. Missing, empty or "0" is off. Only "1" is on, so a
  * typo does not time the callback. Read once in Init, before the audio thread. */
-inline bool VoLumLinuxCallbackTimingEnabled(const char* env)
-{
-  return env != nullptr && std::strcmp(env, "1") == 0;
-}
+inline bool VoLumLinuxCallbackTimingEnabled(const char* env) { return env != nullptr && std::strcmp(env, "1") == 0; }
 
 /** Callback period in microseconds, rounded up. 256 frames at 48000 Hz is
  * 5333.333 us, so the period is 5334 us and a callback of that length has not
@@ -164,9 +161,7 @@ inline constexpr uint32_t kVoLumLinuxCallbackBudgetThousandths = 650;
 
 inline uint32_t VoLumLinuxCallbackBudgetUs(uint32_t frames, uint32_t sampleRate)
 {
-  return static_cast<uint32_t>((static_cast<uint64_t>(VoLumLinuxCallbackPeriodUs(frames, sampleRate)) *
-                                kVoLumLinuxCallbackBudgetThousandths) /
-                               1000ull);
+  return static_cast<uint32_t>((static_cast<uint64_t>(VoLumLinuxCallbackPeriodUs(frames, sampleRate)) * kVoLumLinuxCallbackBudgetThousandths) / 1000ull);
 }
 
 enum class VoLumLinuxCallbackVerdict
@@ -187,9 +182,7 @@ enum class VoLumLinuxCallbackVerdict
 /** strict is the CI switch (smoke --strict-xruns). The box passes false.
  * jackdXruns is the count in the measured window. maxCallbackUs is the slowest
  * callback whose end time fell in that window. */
-inline VoLumLinuxCallbackVerdict VoLumLinuxClassifyCallbackWindow(uint32_t maxCallbackUs, uint32_t frames,
-                                                                 uint32_t sampleRate, int jackdXruns, bool strict,
-                                                                 bool timingComplete)
+inline VoLumLinuxCallbackVerdict VoLumLinuxClassifyCallbackWindow(uint32_t maxCallbackUs, uint32_t frames, uint32_t sampleRate, int jackdXruns, bool strict, bool timingComplete)
 {
   if (!timingComplete || frames == 0 || sampleRate == 0)
     return VoLumLinuxCallbackVerdict::FailMissing;

@@ -58,9 +58,8 @@ void IPlugAPPLinuxPrintDevices(FILE* out);
  *  audio thread exists. phase, lastMono and seen belong to that thread.
  *  Writes a -24 dBFS 440 Hz sine, silence, or one zeroed buffer and returns
  *  true so the plug-in does not run. Off returns false and writes nothing. */
-bool IPlugAPPLinuxGateTone(double* output, int channels, uint32_t frames, double sampleRate, unsigned int status,
-                           double streamTime, const VoLumLinuxGateTonePlan& plan, double& phase, double& lastMono,
-                           unsigned& seen);
+bool IPlugAPPLinuxGateTone(
+  double* output, int channels, uint32_t frames, double sampleRate, unsigned int status, double streamTime, const VoLumLinuxGateTonePlan& plan, double& phase, double& lastMono, unsigned& seen);
 
 /** Times one AudioCallback. enabled false does not read the clock. */
 class IPlugAPPLinuxCallbackSpan

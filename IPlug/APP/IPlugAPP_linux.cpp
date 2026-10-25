@@ -167,9 +167,8 @@ void IPlugAPPLinuxPrintDevices(FILE* out)
   }
 }
 
-bool IPlugAPPLinuxGateTone(double* output, int channels, uint32_t frames, double sampleRate, unsigned int status,
-                           double streamTime, const VoLumLinuxGateTonePlan& plan, double& phase, double& lastMono,
-                           unsigned& seen)
+bool IPlugAPPLinuxGateTone(
+  double* output, int channels, uint32_t frames, double sampleRate, unsigned int status, double streamTime, const VoLumLinuxGateTonePlan& plan, double& phase, double& lastMono, unsigned& seen)
 {
   if (plan.mode == VoLumLinuxGateToneMode::Off)
     return false;
@@ -256,7 +255,9 @@ void RecordCallback(uint64_t endNs, uint32_t durUs, uint32_t frames, uint32_t ra
 } // namespace
 
 IPlugAPPLinuxCallbackSpan::IPlugAPPLinuxCallbackSpan(bool enabled, uint32_t frames, double sampleRate)
-: mOn(enabled), mFrames(frames), mRate(sampleRate > 0.0 ? static_cast<uint32_t>(sampleRate) : 0)
+  : mOn(enabled)
+  , mFrames(frames)
+  , mRate(sampleRate > 0.0 ? static_cast<uint32_t>(sampleRate) : 0)
 {
   if (!mOn)
     return;
@@ -297,12 +298,10 @@ void IPlugAPPLinuxDumpCallbackTiming(FILE* out)
   // closeStream has joined the callback thread, so the relaxed stores are visible.
   const uint32_t count = gCallbackWrite.load(std::memory_order_relaxed);
   const uint32_t stored = count < kCallbackTimingCap ? count : kCallbackTimingCap;
-  std::fprintf(out, "cb-timing enabled=1 count=%u max_us=%u frames=%u rate=%u overflow=%u\n", count,
-               gCallbackMaxUs.load(std::memory_order_relaxed), gCallbackFrames.load(std::memory_order_relaxed),
+  std::fprintf(out, "cb-timing enabled=1 count=%u max_us=%u frames=%u rate=%u overflow=%u\n", count, gCallbackMaxUs.load(std::memory_order_relaxed), gCallbackFrames.load(std::memory_order_relaxed),
                gCallbackRate.load(std::memory_order_relaxed), gCallbackOverflow.load(std::memory_order_relaxed));
   for (uint32_t i = 0; i < stored; ++i)
-    std::fprintf(out, "cb-timing-row end_ns=%llu dur_us=%u\n",
-                 static_cast<unsigned long long>(gCallbackSamples[i].endNs), gCallbackSamples[i].durUs);
+    std::fprintf(out, "cb-timing-row end_ns=%llu dur_us=%u\n", static_cast<unsigned long long>(gCallbackSamples[i].endNs), gCallbackSamples[i].durUs);
   std::fflush(out);
 }
 
