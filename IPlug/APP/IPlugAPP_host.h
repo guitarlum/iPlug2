@@ -376,6 +376,8 @@ private:
   double mLinuxGatePhase = 0.0;
   double mLinuxGateLastMono = -1.0;
   unsigned mLinuxGateSeen = 0;
+  // VOLUM_CALLBACK_TIMING, read in Init before the audio thread exists.
+  bool mLinuxCallbackTiming = false;
 #endif
 
   friend class IPlugAPP;

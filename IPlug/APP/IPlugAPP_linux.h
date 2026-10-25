@@ -20,6 +20,7 @@
  * main window's X window, driven by the IPlugLinuxPollRunLoop the app pushes.
  */
 
+#include <cstdint>
 #include <cstdio>
 #include <vector>
 
@@ -60,5 +61,27 @@ void IPlugAPPLinuxPrintDevices(FILE* out);
 bool IPlugAPPLinuxGateTone(double* output, int channels, uint32_t frames, double sampleRate, unsigned int status,
                            double streamTime, const VoLumLinuxGateTonePlan& plan, double& phase, double& lastMono,
                            unsigned& seen);
+
+/** Times one AudioCallback. enabled false does not read the clock. */
+class IPlugAPPLinuxCallbackSpan
+{
+public:
+  IPlugAPPLinuxCallbackSpan(bool enabled, uint32_t frames, double sampleRate);
+  ~IPlugAPPLinuxCallbackSpan();
+  IPlugAPPLinuxCallbackSpan(const IPlugAPPLinuxCallbackSpan&) = delete;
+  IPlugAPPLinuxCallbackSpan& operator=(const IPlugAPPLinuxCallbackSpan&) = delete;
+
+private:
+  bool mOn = false;
+  uint32_t mFrames = 0;
+  uint32_t mRate = 0;
+  uint64_t mStartNs = 0;
+};
+
+/** Drops samples from a previous stream. Main thread, before the audio thread exists. */
+void IPlugAPPLinuxResetCallbackTiming();
+
+/** Prints the timing log. Main thread, after the audio thread has stopped. */
+void IPlugAPPLinuxDumpCallbackTiming(FILE* out);
 
 END_IPLUG_NAMESPACE

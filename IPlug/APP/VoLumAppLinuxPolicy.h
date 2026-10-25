@@ -140,4 +140,66 @@ inline VoLumLinuxGateTonePlan VoLumLinuxReadGateTone(const char* tone, const cha
   return plan;
 }
 
+/** VOLUM_CALLBACK_TIMING. Missing, empty or "0" is off. Only "1" is on, so a
+ * typo does not time the callback. Read once in Init, before the audio thread. */
+inline bool VoLumLinuxCallbackTimingEnabled(const char* env)
+{
+  return env != nullptr && std::strcmp(env, "1") == 0;
+}
+
+/** Callback period in microseconds, rounded up. 256 frames at 48000 Hz is
+ * 5333.333 us, so the period is 5334 us and a callback of that length has not
+ * exceeded it. */
+inline uint32_t VoLumLinuxCallbackPeriodUs(uint32_t frames, uint32_t sampleRate)
+{
+  if (frames == 0 || sampleRate == 0)
+    return 0;
+  return static_cast<uint32_t>((static_cast<uint64_t>(frames) * 1000000ull + sampleRate - 1ull) / sampleRate);
+}
+
+/** Thousandths of the period. 650 is 65 percent: the box's measured maxima sit
+ * near half the period (see reports/18-callback-budget.md), and 60-70 percent
+ * still fails a callback that has used most of its time. */
+inline constexpr uint32_t kVoLumLinuxCallbackBudgetThousandths = 650;
+
+inline uint32_t VoLumLinuxCallbackBudgetUs(uint32_t frames, uint32_t sampleRate)
+{
+  return static_cast<uint32_t>((static_cast<uint64_t>(VoLumLinuxCallbackPeriodUs(frames, sampleRate)) *
+                                kVoLumLinuxCallbackBudgetThousandths) /
+                               1000ull);
+}
+
+enum class VoLumLinuxCallbackVerdict
+{
+  /** No jackd xrun, and every callback in the window was inside the budget and the period. */
+  Pass,
+  /** jackd reported an xrun and every callback stayed inside the budget. The box
+   * prints this and does not fail. CI (--strict-xruns) does not use this verdict. */
+  DriverXrun,
+  /** A callback exceeded the period or the budget. Fails on the box and in CI. */
+  FailCallback,
+  /** CI only: a jackd xrun while callbacks stayed inside the budget. */
+  FailStrictJack,
+  /** The timing log or the window bounds were missing. Fails closed. */
+  FailMissing
+};
+
+/** strict is the CI switch (smoke --strict-xruns). The box passes false.
+ * jackdXruns is the count in the measured window. maxCallbackUs is the slowest
+ * callback whose end time fell in that window. */
+inline VoLumLinuxCallbackVerdict VoLumLinuxClassifyCallbackWindow(uint32_t maxCallbackUs, uint32_t frames,
+                                                                 uint32_t sampleRate, int jackdXruns, bool strict,
+                                                                 bool timingComplete)
+{
+  if (!timingComplete || frames == 0 || sampleRate == 0)
+    return VoLumLinuxCallbackVerdict::FailMissing;
+  const uint32_t period = VoLumLinuxCallbackPeriodUs(frames, sampleRate);
+  const uint32_t budget = VoLumLinuxCallbackBudgetUs(frames, sampleRate);
+  if (maxCallbackUs > period || maxCallbackUs > budget)
+    return VoLumLinuxCallbackVerdict::FailCallback;
+  if (jackdXruns > 0)
+    return strict ? VoLumLinuxCallbackVerdict::FailStrictJack : VoLumLinuxCallbackVerdict::DriverXrun;
+  return VoLumLinuxCallbackVerdict::Pass;
+}
+
 } // namespace iplug

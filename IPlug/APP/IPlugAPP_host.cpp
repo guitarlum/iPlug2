@@ -62,6 +62,12 @@ IPlugAPPHost::~IPlugAPPHost()
 
   CloseAudio();
 
+#if defined OS_LINUX
+  // The JACK thread has stopped inside CloseAudio. Printing here is the main thread.
+  if (mLinuxCallbackTiming)
+    IPlugAPPLinuxDumpCallbackTiming(stderr);
+#endif
+
   // Closed and released here rather than left to member destruction. Both are
   // unique_ptrs declared below mDAC, so their backends - and any port still open -
   // are torn down after this body returns, which is outside the watchdog. A wedged
@@ -114,6 +120,7 @@ bool IPlugAPPHost::Init()
     return false;
 
 #if defined OS_LINUX
+  mLinuxCallbackTiming = VoLumLinuxCallbackTimingEnabled(std::getenv("VOLUM_CALLBACK_TIMING"));
   mLinuxGateTone =
     VoLumLinuxReadGateTone(std::getenv("VOLUM_LINUX_GATE_TONE"), std::getenv("VOLUM_LINUX_GATE_DROP_AT"));
   if (mLinuxGateTone.mode != VoLumLinuxGateToneMode::Off)
@@ -1160,6 +1167,10 @@ void IPlugAPPHost::CloseAudio()
 bool IPlugAPPHost::InitAudio(uint32_t inId, uint32_t outId, uint32_t sr, uint32_t iovs)
 {
   CloseAudio();
+#if defined OS_LINUX
+  if (mLinuxCallbackTiming)
+    IPlugAPPLinuxResetCallbackTiming();
+#endif
 
   // What the caller asked for, kept so the corrected value can be written back below.
   const uint32_t requestedSR = sr;
@@ -1443,6 +1454,10 @@ void ApplyFades(double *pBuffer, int nChans, int nFrames, bool down)
 int IPlugAPPHost::AudioCallback(void* pOutputBuffer, void* pInputBuffer, uint32_t nFrames, double streamTime, RtAudioStreamStatus status, void* pUserData)
 {
   IPlugAPPHost* _this = (IPlugAPPHost*) pUserData;
+#if defined OS_LINUX
+  // Whole callback, including the plug-in. Off when VOLUM_CALLBACK_TIMING is unset.
+  IPlugAPPLinuxCallbackSpan volumCallbackSpan(_this->mLinuxCallbackTiming, nFrames, _this->mSampleRate);
+#endif
 
   const int pluginIns  = _this->GetPlug()->MaxNChannels(ERoute::kInput);
   const int pluginOuts = _this->GetPlug()->MaxNChannels(ERoute::kOutput);
