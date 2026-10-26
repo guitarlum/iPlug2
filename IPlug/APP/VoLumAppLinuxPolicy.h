@@ -5,6 +5,8 @@
 // them on every platform. IPlugAPP_linux.cpp, IPlugAPP_host.cpp and
 // IPlugAPP_dialog.cpp call them inside OS_LINUX.
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <string>
@@ -154,50 +156,50 @@ inline uint32_t VoLumLinuxCallbackPeriodUs(uint32_t frames, uint32_t sampleRate)
   return static_cast<uint32_t>((static_cast<uint64_t>(frames) * 1000000ull + sampleRate - 1ull) / sampleRate);
 }
 
-/** Thousandths of the period on the box. Box windows peaked at 3161 us (59
- * percent of 5334), so 70 percent (3733 us) fails a callback about a fifth
- * slower than that peak. See reports/18-callback-budget.md. */
+/** Thousandths of the period the 99th-percentile callback may use. The slowest
+ * single callback is scheduler noise (box windows 1535 to 4172 us at 256 / 48
+ * kHz), the p99 is not: box 1355 to 2159 us, GitHub runner 2837 to 2915 us. 70
+ * percent is 3733 us. See reports/18-callback-budget.md. */
 inline constexpr uint32_t kVoLumLinuxCallbackBudgetThousandths = 700;
 
-/** Thousandths of the period on CI (strict). Shared GitHub runners peaked at
- * 3905 us (73 percent), above the box budget. 80 percent is 4267 us. */
-inline constexpr uint32_t kVoLumLinuxCallbackBudgetStrictThousandths = 800;
-
-inline uint32_t VoLumLinuxCallbackBudgetUs(uint32_t frames, uint32_t sampleRate, bool strict)
+inline uint32_t VoLumLinuxCallbackBudgetUs(uint32_t frames, uint32_t sampleRate)
 {
-  const uint32_t thousandths =
-    strict ? kVoLumLinuxCallbackBudgetStrictThousandths : kVoLumLinuxCallbackBudgetThousandths;
-  return static_cast<uint32_t>(
-    (static_cast<uint64_t>(VoLumLinuxCallbackPeriodUs(frames, sampleRate)) * thousandths) / 1000ull);
+  return static_cast<uint32_t>((static_cast<uint64_t>(VoLumLinuxCallbackPeriodUs(frames, sampleRate)) *
+                                kVoLumLinuxCallbackBudgetThousandths) /
+                               1000ull);
 }
+
+/** Index of the 99th percentile in n durations sorted ascending. */
+inline size_t VoLumLinuxCallbackP99Index(size_t n) { return n == 0 ? 0 : std::min(n - 1, (n * 99) / 100); }
 
 enum class VoLumLinuxCallbackVerdict
 {
-  /** No jackd xrun, and every callback in the window was inside the budget and the period. */
+  /** No jackd xrun, no callback over the period, p99 inside the budget. */
   Pass,
-  /** jackd reported an xrun and every callback stayed inside the budget. The box
+  /** jackd reported an xrun while VoLum's callbacks passed both rules. The box
    * prints this and does not fail. CI (--strict-xruns) does not use this verdict. */
   DriverXrun,
-  /** A callback exceeded the period or the budget. Fails on the box and in CI. */
+  /** A callback took longer than the period: a stall. Fails on the box and in CI. */
   FailCallback,
-  /** CI only: a jackd xrun while callbacks stayed inside the budget. */
+  /** The 99th-percentile callback exceeded the budget: sustained load. Fails on the box and in CI. */
+  FailLoad,
+  /** CI only: a jackd xrun while VoLum's callbacks passed both rules. */
   FailStrictJack,
   /** The timing log or the window bounds were missing. Fails closed. */
   FailMissing
 };
 
-/** strict is the CI switch (smoke --strict-xruns). The box passes false. It
- * also picks the budget: the box's quieter machine gets the tighter one.
- * jackdXruns is the count in the measured window. maxCallbackUs is the slowest
- * callback whose end time fell in that window. */
-inline VoLumLinuxCallbackVerdict VoLumLinuxClassifyCallbackWindow(uint32_t maxCallbackUs, uint32_t frames, uint32_t sampleRate, int jackdXruns, bool strict, bool timingComplete)
+/** strict is the CI switch (smoke --strict-xruns). The box passes false.
+ * jackdXruns is the count in the measured window. maxCallbackUs and
+ * p99CallbackUs cover the callbacks whose end time fell in that window. */
+inline VoLumLinuxCallbackVerdict VoLumLinuxClassifyCallbackWindow(uint32_t maxCallbackUs, uint32_t p99CallbackUs, uint32_t frames, uint32_t sampleRate, int jackdXruns, bool strict, bool timingComplete)
 {
   if (!timingComplete || frames == 0 || sampleRate == 0)
     return VoLumLinuxCallbackVerdict::FailMissing;
-  const uint32_t period = VoLumLinuxCallbackPeriodUs(frames, sampleRate);
-  const uint32_t budget = VoLumLinuxCallbackBudgetUs(frames, sampleRate, strict);
-  if (maxCallbackUs > period || maxCallbackUs > budget)
+  if (maxCallbackUs > VoLumLinuxCallbackPeriodUs(frames, sampleRate))
     return VoLumLinuxCallbackVerdict::FailCallback;
+  if (p99CallbackUs > VoLumLinuxCallbackBudgetUs(frames, sampleRate))
+    return VoLumLinuxCallbackVerdict::FailLoad;
   if (jackdXruns > 0)
     return strict ? VoLumLinuxCallbackVerdict::FailStrictJack : VoLumLinuxCallbackVerdict::DriverXrun;
   return VoLumLinuxCallbackVerdict::Pass;
